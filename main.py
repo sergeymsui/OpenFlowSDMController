@@ -152,6 +152,18 @@ def flow_mod(dst_mac, out_port):
     return header + body
 
 
+topology = {}  # Хранение топологии: MAC -> Switch:Port
+
+
+def print_topology():
+    print("\n[🌐] Текущая топология сети:")
+    print("Switch_Port".ljust(20), "⇔", "MAC")
+    print("-" * 40)
+    for mac, (switch, port) in topology.items():
+        print(f"{switch}:{port}".ljust(20), "⇔", f"{mac.hex(':')}")
+    print("-" * 40, "\n")
+
+
 async def handle_switch(reader, writer):
     """
     Обрабатывает подключение коммутатора.
@@ -161,6 +173,8 @@ async def handle_switch(reader, writer):
     """
     addr = writer.get_extra_info("peername")
     print(f"[+] Switch connected from {addr}")
+
+    datapath_id = None
 
     writer.write(ofp_header(OFPT_HELLO, 8))
     writer.write(features_request())
@@ -215,6 +229,8 @@ async def handle_switch(reader, writer):
                 src_mac = eth_frame[6:12]
 
                 mac_table[src_mac] = in_port
+                topology[src_mac] = (f"Switch_{datapath_id:#x}", in_port)
+
                 out_port = mac_table.get(dst_mac, OFPP_FLOOD)
 
                 if out_port != OFPP_FLOOD:
@@ -228,14 +244,13 @@ async def handle_switch(reader, writer):
                 )
                 writer.write(pkt_out)
 
-                # Добавляем обработку разрыва соединения при отправке
                 try:
                     await writer.drain()
                 except ConnectionResetError:
                     print(f"[!] Connection reset by {addr} during write.")
                     break
 
-                print(f"[mac_table updated]: {mac_table}")
+                print_topology()
 
             elif msg_type == OFPT_PORT_STATUS:
                 reason, pad = struct.unpack("!B7s", body[:8])
