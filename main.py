@@ -3,6 +3,9 @@ import struct
 
 # OpenFlow constants
 OFPT_HELLO = 0
+OFPT_ERROR = 1
+OFPT_ECHO_REQUEST = 2
+OFPT_ECHO_REPLY = 3
 OFPT_FEATURES_REQUEST = 5
 OFPT_FEATURES_REPLY = 6
 OFPT_PACKET_IN = 10
@@ -18,12 +21,38 @@ OFP_NO_BUFFER = 0xFFFFFFFF
 mac_table = {}  # MAC -> port
 
 
-def ofp_header(msg_type, length):
-    return struct.pack("!BBHI", OFP_VERSION, msg_type, length, 0)
+def ofp_header(msg_type, length, xid=0):
+    return struct.pack("!BBHI", OFP_VERSION, msg_type, length, xid)
 
 
 def features_request():
     return ofp_header(OFPT_FEATURES_REQUEST, 8)
+
+
+def echo_reply(data, xid):
+    length = 8 + len(data)
+    return ofp_header(OFPT_ECHO_REPLY, length, xid) + data
+
+
+def features_reply(xid):
+    datapath_id = 0x0000000000000001
+    n_buffers = 256
+    n_tables = 254
+    auxiliary_id = 0
+    pad = b"\x00" * 2
+    capabilities = 0x0000004F
+    reserved = 0
+    body = struct.pack(
+        "!QIBB2sII",
+        datapath_id,
+        n_buffers,
+        n_tables,
+        auxiliary_id,
+        pad,
+        capabilities,
+        reserved,
+    )
+    return ofp_header(OFPT_FEATURES_REPLY, 8 + len(body), xid) + body
 
 
 def packet_out(buffer_id, in_port, actions, data=b""):
@@ -49,8 +78,6 @@ def flow_mod(dst_mac, out_port):
     oxm_class = 0x8000  # OpenFlow Basic
 
     oxm_entries = b""
-
-    # Match on eth_dst
     oxm_field = 6  # ETH_DST
     oxm_length = 6
     oxm_header = struct.pack("!HBB", oxm_class, oxm_field << 1, oxm_length)
@@ -60,38 +87,23 @@ def flow_mod(dst_mac, out_port):
     padding = b"\x00" * ((8 - match_len % 8) % 8)
     match = struct.pack("!HH", match_type, match_len) + oxm_entries + padding
 
-    instructions = b""
     instruction_type = 4  # APPLY_ACTIONS
     instruction_len = 24
     action_type = 0  # OUTPUT
     action_len = 16
     max_len = 0xFFFF
-
     action = struct.pack("!HHIH6x", action_type, action_len, out_port, max_len)
     instruction = struct.pack("!HH4x", instruction_type, instruction_len) + action
-    instructions += instruction
 
-    length = 56 + len(match) + len(instructions)
+    length = 56 + len(match) + len(instruction)
     header = ofp_header(OFPT_FLOW_MOD, length)
 
     body = (
         struct.pack(
-            "!QQBBHHHIIIHH2x",
-            0,
-            0,  # cookie, mask
-            0,
-            OFPFC_ADD,
-            0,
-            0,  # idle_timeout, hard_timeout
-            1,  # priority
-            OFP_NO_BUFFER,
-            0,
-            0,  # out_port, out_group
-            0,  # flags
-            0,
+            "!QQBBHHHIIIHH2x", 0, 0, 0, OFPFC_ADD, 0, 0, 1, OFP_NO_BUFFER, 0, 0, 0, 0
         )
         + match
-        + instructions
+        + instruction
     )
 
     return header + body
@@ -101,25 +113,39 @@ async def handle_switch(reader, writer):
     addr = writer.get_extra_info("peername")
     print(f"[+] Switch connected from {addr}")
 
+    writer.write(ofp_header(OFPT_HELLO, 8))
+    writer.write(features_request())
+    await writer.drain()
+
     try:
-        data = await reader.readexactly(8)
-        version, msg_type, length, xid = struct.unpack("!BBHI", data)
-
-        if msg_type == OFPT_HELLO:
-            writer.write(ofp_header(OFPT_HELLO, 8))
-            writer.write(features_request())
-            await writer.drain()
-
         while True:
             header = await reader.readexactly(8)
             version, msg_type, length, xid = struct.unpack("!BBHI", header)
             body = await reader.readexactly(length - 8)
 
-            print(f"msg_type = {msg_type}")
+            if msg_type == OFPT_HELLO:
+                print("[*] Received HELLO from switch.")
 
-            if msg_type == OFPT_PACKET_IN:
-                (buffer_id,) = struct.unpack("!I", body[:4])
-                (in_port,) = struct.unpack("!I", body[8:12])
+            elif msg_type == OFPT_ERROR:
+                err_type, err_code = struct.unpack("!HH", body[:4])
+                print(
+                    f"[!] Error message from switch: type={err_type}, code={err_code}"
+                )
+
+            elif msg_type == OFPT_ECHO_REQUEST:
+                print("[*] ECHO_REQUEST received, sending ECHO_REPLY.")
+                writer.write(echo_reply(body, xid))
+                await writer.drain()
+
+            elif msg_type == OFPT_FEATURES_REPLY:
+                datapath_id = struct.unpack("!Q", body[:8])[0]
+                print(
+                    f"[+] Switch features reply received, Datapath ID: {datapath_id:#x}"
+                )
+
+            elif msg_type == OFPT_PACKET_IN:
+                buffer_id = struct.unpack("!I", body[:4])[0]
+                in_port = struct.unpack("!I", body[8:12])[0]
                 eth_frame = body[26:]
 
                 if len(eth_frame) < 14:
@@ -134,15 +160,19 @@ async def handle_switch(reader, writer):
                 if out_port != OFPP_FLOOD:
                     writer.write(flow_mod(dst_mac, out_port))
 
-                if buffer_id == OFP_NO_BUFFER:
-                    pkt_out = packet_out(buffer_id, in_port, [out_port], eth_frame)
-                else:
-                    pkt_out = packet_out(buffer_id, in_port, [out_port])
-
+                pkt_out = packet_out(
+                    buffer_id,
+                    in_port,
+                    [out_port],
+                    eth_frame if buffer_id == OFP_NO_BUFFER else b"",
+                )
                 writer.write(pkt_out)
                 await writer.drain()
 
-                await print(mac_table)
+                print(f"[mac_table updated]: {mac_table}")
+
+            else:
+                print(f"[?] Unknown message type received: {msg_type}")
 
     except asyncio.IncompleteReadError:
         print(f"[-] Switch {addr} disconnected")
