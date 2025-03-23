@@ -172,8 +172,6 @@ async def handle_switch(reader, writer):
             version, msg_type, length, xid = struct.unpack("!BBHI", header)
             body = await reader.readexactly(length - 8)
 
-            print(f"msg_type = {msg_type}")
-
             if msg_type == OFPT_HELLO:
                 print("[*] Received HELLO from switch.")
 
@@ -192,6 +190,17 @@ async def handle_switch(reader, writer):
                 datapath_id = struct.unpack("!Q", body[:8])[0]
                 print(
                     f"[+] Switch features reply received, Datapath ID: {datapath_id:#x}"
+                )
+
+            elif msg_type == OFPT_PORT_STATUS:
+                reason, pad = struct.unpack("!B7s", body[:8])
+                (port_no,) = struct.unpack("!I", body[8:12])
+
+                reasons = {0: "ADD", 1: "DELETE", 2: "MODIFY"}
+                reason_str = reasons.get(reason, f"UNKNOWN({reason})")
+
+                print(
+                    f"[⚡] Port status change detected: Port={port_no}, Reason={reason_str}"
                 )
 
             elif msg_type == OFPT_PACKET_IN:
@@ -218,7 +227,13 @@ async def handle_switch(reader, writer):
                     eth_frame if buffer_id == OFP_NO_BUFFER else b"",
                 )
                 writer.write(pkt_out)
-                await writer.drain()
+
+                # Добавляем обработку разрыва соединения при отправке
+                try:
+                    await writer.drain()
+                except ConnectionResetError:
+                    print(f"[!] Connection reset by {addr} during write.")
+                    break
 
                 print(f"[mac_table updated]: {mac_table}")
 
@@ -238,6 +253,8 @@ async def handle_switch(reader, writer):
 
     except asyncio.IncompleteReadError:
         print(f"[-] Switch {addr} disconnected")
+    except ConnectionResetError:
+        print(f"[-] Switch {addr} connection reset")
     except Exception as e:
         print(f"[!] Error handling switch {addr}: {e}")
     finally:
