@@ -23,75 +23,19 @@ mac_table = {}  # MAC -> port
 
 
 def ofp_header(msg_type, length, xid=0):
-    """
-    Создает заголовок OpenFlow сообщения.
-
-    :param msg_type: Тип сообщения OpenFlow.
-    :param length: Длина сообщения.
-    :param xid: Идентификатор транзакции.
-    :return: Заголовок сообщения в формате байтов.
-    """
     return struct.pack("!BBHI", OFP_VERSION, msg_type, length, xid)
 
 
 def features_request():
-    """
-    Создает сообщение запроса функций (features request).
-
-    :return: Сообщение запроса функций в формате байтов.
-    """
     return ofp_header(OFPT_FEATURES_REQUEST, 8)
 
 
 def echo_reply(data, xid):
-    """
-    Создает сообщение ответа на эхо-запрос (echo reply).
-
-    :param data: Данные для ответа.
-    :param xid: Идентификатор транзакции.
-    :return: Сообщение ответа на эхо-запрос в формате байтов.
-    """
     length = 8 + len(data)
     return ofp_header(OFPT_ECHO_REPLY, length, xid) + data
 
 
-def features_reply(xid):
-    """
-    Создает сообщение ответа на запрос функций (features reply).
-
-    :param xid: Идентификатор транзакции.
-    :return: Сообщение ответа на запрос функций в формате байтов.
-    """
-    datapath_id = 0x0000000000000001
-    n_buffers = 256
-    n_tables = 254
-    auxiliary_id = 0
-    pad = b"\x00" * 2
-    capabilities = 0x0000004F
-    reserved = 0
-    body = struct.pack(
-        "!QIBB2sII",
-        datapath_id,
-        n_buffers,
-        n_tables,
-        auxiliary_id,
-        pad,
-        capabilities,
-        reserved,
-    )
-    return ofp_header(OFPT_FEATURES_REPLY, 8 + len(body), xid) + body
-
-
 def packet_out(buffer_id, in_port, actions, data=b""):
-    """
-    Создает сообщение отправки пакета (packet out).
-
-    :param buffer_id: Идентификатор буфера.
-    :param in_port: Входной порт.
-    :param actions: Список действий.
-    :param data: Данные пакета.
-    :return: Сообщение отправки пакета в формате байтов.
-    """
     max_len = 0xFFFF
     action_list = b""
 
@@ -110,21 +54,12 @@ def packet_out(buffer_id, in_port, actions, data=b""):
 
 
 def flow_mod(dst_mac, out_port):
-    """
-    Создает сообщение модификации потока (flow mod).
-
-    :param dst_mac: MAC-адрес назначения.
-    :param out_port: Выходной порт.
-    :return: Сообщение модификации потока в формате байтов.
-    """
     match_type = 1  # OFPMT_OXM
-    oxm_class = 0x8000  # OpenFlow Basic
-
-    oxm_entries = b""
+    oxm_class = 0x8000
     oxm_field = 6  # ETH_DST
     oxm_length = 6
     oxm_header = struct.pack("!HBB", oxm_class, oxm_field << 1, oxm_length)
-    oxm_entries += oxm_header + dst_mac
+    oxm_entries = oxm_header + dst_mac
 
     match_len = len(oxm_entries) + 4
     padding = b"\x00" * ((8 - match_len % 8) % 8)
@@ -152,11 +87,11 @@ def flow_mod(dst_mac, out_port):
     return header + body
 
 
-topology = {}  # Хранение топологии: MAC -> Switch:Port
+topology = {}  # MAC -> Switch:Port
 
 
 def print_topology():
-    print("\n[🌐] Текущая топология сети:")
+    print("\n[\U0001f310] Текущая топология сети:")
     print("Switch_Port".ljust(20), "⇔", "MAC")
     print("-" * 40)
     for mac, (switch, port) in topology.items():
@@ -165,31 +100,35 @@ def print_topology():
 
 
 async def handle_switch(reader, writer):
-    """
-    Обрабатывает подключение коммутатора.
-
-    :param reader: Объект для чтения данных.
-    :param writer: Объект для записи данных.
-    """
     addr = writer.get_extra_info("peername")
     print(f"[+] Switch connected from {addr}")
 
     datapath_id = None
 
-    writer.write(ofp_header(OFPT_HELLO, 8))
-    writer.write(features_request())
-    await writer.drain()
-
     try:
+        writer.write(ofp_header(OFPT_HELLO, 8))
+        await writer.drain()
+
+        # Ждём ответ HELLO
+        header = await reader.readexactly(8)
+        version, msg_type, length, xid = struct.unpack("!BBHI", header)
+        body = await reader.readexactly(length - 8)
+
+        if msg_type != OFPT_HELLO:
+            print(f"[!] Unexpected message type {msg_type}, expected HELLO")
+            return
+
+        print("[*] Received HELLO from switch.")
+
+        writer.write(features_request())
+        await writer.drain()
+
         while True:
             header = await reader.readexactly(8)
             version, msg_type, length, xid = struct.unpack("!BBHI", header)
             body = await reader.readexactly(length - 8)
 
-            if msg_type == OFPT_HELLO:
-                print("[*] Received HELLO from switch.")
-
-            elif msg_type == OFPT_ERROR:
+            if msg_type == OFPT_ERROR:
                 err_type, err_code = struct.unpack("!HH", body[:4])
                 print(
                     f"[!] Error message from switch: type={err_type}, code={err_code}"
@@ -198,9 +137,16 @@ async def handle_switch(reader, writer):
             elif msg_type == OFPT_ECHO_REQUEST:
                 print("[*] ECHO_REQUEST received, sending ECHO_REPLY.")
                 writer.write(echo_reply(body, xid))
-                await writer.drain()
+                try:
+                    await writer.drain()
+                except ConnectionResetError:
+                    print(f"[!] Connection reset during echo reply to {addr}")
+                    break
 
             elif msg_type == OFPT_FEATURES_REPLY:
+
+                print(f"[+] OFPT_FEATURES_REPLY was recived!")
+
                 datapath_id = struct.unpack("!Q", body[:8])[0]
                 print(
                     f"[+] Switch features reply received, Datapath ID: {datapath_id:#x}"
@@ -209,12 +155,10 @@ async def handle_switch(reader, writer):
             elif msg_type == OFPT_PORT_STATUS:
                 reason, pad = struct.unpack("!B7s", body[:8])
                 (port_no,) = struct.unpack("!I", body[8:12])
-
                 reasons = {0: "ADD", 1: "DELETE", 2: "MODIFY"}
                 reason_str = reasons.get(reason, f"UNKNOWN({reason})")
-
                 print(
-                    f"[⚡] Port status change detected: Port={port_no}, Reason={reason_str}"
+                    f"[\u26a1] Port status change detected: Port={port_no}, Reason={reason_str}"
                 )
 
             elif msg_type == OFPT_PACKET_IN:
@@ -236,12 +180,7 @@ async def handle_switch(reader, writer):
                 if out_port != OFPP_FLOOD:
                     writer.write(flow_mod(dst_mac, out_port))
 
-                pkt_out = packet_out(
-                    buffer_id,
-                    in_port,
-                    [out_port],
-                    eth_frame if buffer_id == OFP_NO_BUFFER else b"",
-                )
+                pkt_out = packet_out(OFP_NO_BUFFER, in_port, [out_port], eth_frame)
                 writer.write(pkt_out)
 
                 try:
@@ -251,17 +190,6 @@ async def handle_switch(reader, writer):
                     break
 
                 print_topology()
-
-            elif msg_type == OFPT_PORT_STATUS:
-                reason, pad = struct.unpack("!B7s", body[:8])
-                (port_no,) = struct.unpack("!I", body[8:12])
-
-                reasons = {0: "ADD", 1: "DELETE", 2: "MODIFY"}
-                reason_str = reasons.get(reason, f"UNKNOWN({reason})")
-
-                print(
-                    f"[⚡] Port status change detected: Port={port_no}, Reason={reason_str}"
-                )
 
             else:
                 print(f"[?] Unknown message type received: {msg_type}")
@@ -278,9 +206,6 @@ async def handle_switch(reader, writer):
 
 
 async def main():
-    """
-    Основная функция для запуска сервера OpenFlow.
-    """
     server = await asyncio.start_server(handle_switch, "0.0.0.0", 6653)
     print("[*] Listening on port 6653")
     async with server:
