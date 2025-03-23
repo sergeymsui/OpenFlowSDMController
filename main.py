@@ -11,6 +11,7 @@ OFPT_FEATURES_REPLY = 6
 OFPT_PACKET_IN = 10
 OFPT_FLOW_MOD = 14
 OFPT_PACKET_OUT = 13
+OFPT_PORT_STATUS = 12
 
 OFP_VERSION = 0x04  # OpenFlow 1.3
 OFPP_CONTROLLER = 0xFFFFFFFD
@@ -22,19 +23,45 @@ mac_table = {}  # MAC -> port
 
 
 def ofp_header(msg_type, length, xid=0):
+    """
+    Создает заголовок OpenFlow сообщения.
+
+    :param msg_type: Тип сообщения OpenFlow.
+    :param length: Длина сообщения.
+    :param xid: Идентификатор транзакции.
+    :return: Заголовок сообщения в формате байтов.
+    """
     return struct.pack("!BBHI", OFP_VERSION, msg_type, length, xid)
 
 
 def features_request():
+    """
+    Создает сообщение запроса функций (features request).
+
+    :return: Сообщение запроса функций в формате байтов.
+    """
     return ofp_header(OFPT_FEATURES_REQUEST, 8)
 
 
 def echo_reply(data, xid):
+    """
+    Создает сообщение ответа на эхо-запрос (echo reply).
+
+    :param data: Данные для ответа.
+    :param xid: Идентификатор транзакции.
+    :return: Сообщение ответа на эхо-запрос в формате байтов.
+    """
     length = 8 + len(data)
     return ofp_header(OFPT_ECHO_REPLY, length, xid) + data
 
 
 def features_reply(xid):
+    """
+    Создает сообщение ответа на запрос функций (features reply).
+
+    :param xid: Идентификатор транзакции.
+    :return: Сообщение ответа на запрос функций в формате байтов.
+    """
     datapath_id = 0x0000000000000001
     n_buffers = 256
     n_tables = 254
@@ -56,6 +83,15 @@ def features_reply(xid):
 
 
 def packet_out(buffer_id, in_port, actions, data=b""):
+    """
+    Создает сообщение отправки пакета (packet out).
+
+    :param buffer_id: Идентификатор буфера.
+    :param in_port: Входной порт.
+    :param actions: Список действий.
+    :param data: Данные пакета.
+    :return: Сообщение отправки пакета в формате байтов.
+    """
     max_len = 0xFFFF
     action_list = b""
 
@@ -74,6 +110,13 @@ def packet_out(buffer_id, in_port, actions, data=b""):
 
 
 def flow_mod(dst_mac, out_port):
+    """
+    Создает сообщение модификации потока (flow mod).
+
+    :param dst_mac: MAC-адрес назначения.
+    :param out_port: Выходной порт.
+    :return: Сообщение модификации потока в формате байтов.
+    """
     match_type = 1  # OFPMT_OXM
     oxm_class = 0x8000  # OpenFlow Basic
 
@@ -110,6 +153,12 @@ def flow_mod(dst_mac, out_port):
 
 
 async def handle_switch(reader, writer):
+    """
+    Обрабатывает подключение коммутатора.
+
+    :param reader: Объект для чтения данных.
+    :param writer: Объект для записи данных.
+    """
     addr = writer.get_extra_info("peername")
     print(f"[+] Switch connected from {addr}")
 
@@ -122,6 +171,8 @@ async def handle_switch(reader, writer):
             header = await reader.readexactly(8)
             version, msg_type, length, xid = struct.unpack("!BBHI", header)
             body = await reader.readexactly(length - 8)
+
+            print(f"msg_type = {msg_type}")
 
             if msg_type == OFPT_HELLO:
                 print("[*] Received HELLO from switch.")
@@ -171,6 +222,17 @@ async def handle_switch(reader, writer):
 
                 print(f"[mac_table updated]: {mac_table}")
 
+            elif msg_type == OFPT_PORT_STATUS:
+                reason, pad = struct.unpack("!B7s", body[:8])
+                (port_no,) = struct.unpack("!I", body[8:12])
+
+                reasons = {0: "ADD", 1: "DELETE", 2: "MODIFY"}
+                reason_str = reasons.get(reason, f"UNKNOWN({reason})")
+
+                print(
+                    f"[⚡] Port status change detected: Port={port_no}, Reason={reason_str}"
+                )
+
             else:
                 print(f"[?] Unknown message type received: {msg_type}")
 
@@ -184,6 +246,9 @@ async def handle_switch(reader, writer):
 
 
 async def main():
+    """
+    Основная функция для запуска сервера OpenFlow.
+    """
     server = await asyncio.start_server(handle_switch, "0.0.0.0", 6653)
     print("[*] Listening on port 6653")
     async with server:
