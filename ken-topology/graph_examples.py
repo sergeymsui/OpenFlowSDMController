@@ -1,19 +1,18 @@
 import networkx as nx
 import pickle
+import matplotlib.pyplot as plt
+
 
 if __name__ == "__main__":
     graph = pickle.load(open("filename.pickle", "rb"))
 
-    switches = ["h1"] + [
-        n for n, v in graph.nodes(data=True) if "type" in v and v["type"] == "switch"
-    ]
+    # Рисуем граф
+    nx.draw(graph, with_labels=True, node_color='lightblue', edge_color='gray')
 
-    # edge = [
-    #     (source, target, ports)
-    #     for (source, target, ports) in graph.edges(data=True)
-    #     if source == "h1" and target == "s1"
-    # ]
-    # print(edge)
+    # Сохраняем в PNG
+    plt.savefig("graph.png", format="PNG")
+    plt.close()  # Закрываем рисунок, чтобы не показывался в выводе
 
-    for host_name, host_params in [ (name, params) for name, params in graph.nodes(data=True) if "type" in params and params["type"] == "host" ]:
-        print(host_name, host_params)
+    edges = [ (u, v, params) for (u, v, params) in graph.edges(data=True)
+             if v=="s2"]
+    print(edges)

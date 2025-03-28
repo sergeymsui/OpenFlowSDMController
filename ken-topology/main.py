@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-from collections import defaultdict
+
+import pickle
+import networkx as nx
 from time import sleep
+from collections import defaultdict
 
 from os_ken.base.app_manager import OSKenApp
 from os_ken.controller import ofp_event
@@ -8,11 +11,7 @@ from os_ken.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, set_ev
 from os_ken.ofproto import ofproto_v1_3
 from os_ken.lib.packet import lldp, ether_types, arp, ipv4
 from os_ken.lib.dpid import dpid_to_str
-import ipaddress
-import networkx as nx
 from os_ken.lib import hub
-
-import pickle
 from os_ken.lib.packet import packet, ethernet, lldp
 
 
@@ -23,8 +22,9 @@ class Controller(OSKenApp):
     def __init__(self, *args, **kwargs):
         super(Controller, self).__init__(*args, **kwargs)
 
-        # self.topo = nx.DiGraph()
         self.topo = pickle.load(open("filename.pickle", "rb"))
+        # self.topo = nx.DiGraph()
+
         self.routing_tables = defaultdict(list)
 
         self.datapaths = {}
@@ -37,7 +37,6 @@ class Controller(OSKenApp):
 
         def show():
             while True:
-                print("Hello Kitty")
                 sleep(1)
 
         hub.spawn(show)
@@ -70,6 +69,7 @@ class Controller(OSKenApp):
             self.__add_flow(datapath, 0, match, actions)
 
         self.request_port_desc(datapath)  # Запрос информации о портах
+        self.reroute(datapath)
 
     def _lldp_loop(self):
         while True:
@@ -126,7 +126,7 @@ class Controller(OSKenApp):
                 data=pkt.data,
             )
             datapath.send_msg(out)
-            print(f"[LLDP] Sent from DPID={dpid} port={port.port_no}")
+            # print(f"[LLDP] Sent from DPID={dpid} port={port.port_no}")
 
     def send_features_request(self, datapath):
         parser = datapath.ofproto_parser
@@ -149,12 +149,6 @@ class Controller(OSKenApp):
         pkt = packet.Packet(msg.data)
         lldp_pkt = pkt.get_protocol(lldp.lldp)
 
-        ip_pkt = pkt.get_protocol(ipv4.ipv4)
-        if ip_pkt:
-            src_ip = ip_pkt.src
-            dst_ip = ip_pkt.dst
-            print(f"[IPv4] From {src_ip} to {dst_ip}")
-
         self.topo.add_node(f"s{dpid}", type="switch", dpid=int(dpid))
         if datapath.id not in self.datapaths:
             self.request_port_desc(datapath)
@@ -176,11 +170,13 @@ class Controller(OSKenApp):
                 dst_port=neighbor_port,
             )
             self.topo.add_edge(
-                f"s{int(neighbor_port)}",
+                f"s{int(neighbor_dpid)}",
                 f"s{int(dpid)}",
                 src_port=neighbor_port,
                 dst_port=in_port,
             )
+
+
 
         msg = ev.msg
         parser = msg.datapath.ofproto_parser
@@ -211,8 +207,30 @@ class Controller(OSKenApp):
                 print(
                     f"[HOST] Discovered host {src_mac} on switch {dpid} port {in_port} ip_pkt {ip_pkt}"
                 )
+        
+        if dpid in self.routing_tables:
+            table = self.routing_tables[ dpid ]
 
-        for switch_name, switch_params in [
+            for ip, mac, port in table:
+                match = parser.OFPMatch(eth_type=0x0800, ipv4_dst=ip)
+                actions = [
+                    parser.OFPActionSetField(eth_dst=mac),
+                    parser.OFPActionOutput(port),
+                ]
+                self.__add_flow(datapath, 10, match, actions)
+
+                # Правило для ARP-запросов
+                match = parser.OFPMatch(eth_type=0x0806, arp_tpa=ip)
+                actions = [
+                    parser.OFPActionSetField(eth_dst=mac),
+                    parser.OFPActionOutput(port),
+                ]
+                self.__add_flow(datapath, 10, match, actions)
+
+    def reroute(self, datapath):
+        dpid = datapath.id
+    
+        for switch_name, _ in [
             (name, params)
             for name, params in self.topo.nodes(data=True)
             if "type" in params
@@ -224,9 +242,6 @@ class Controller(OSKenApp):
                 for name, params in self.topo.nodes(data=True)
                 if "type" in params and params["type"] == "host"
             ]:
-
-                print(host_name)
-
                 shortest_path = list()
                 try:
                     shortest_path = [
@@ -236,44 +251,27 @@ class Controller(OSKenApp):
                         )
                     ]
                 except nx.exception.NetworkXNoPath:
-                    print("nx.exception.NetworkXNoPath")
-                finally:
-                    pass
-
-                if len(shortest_path) < 2:
                     continue
 
                 print(
                     f"[MSG] switch_name: {switch_name} host_name: {host_name} shortest_path: {shortest_path}"
                 )
-
+                
                 src_node, dst_node = shortest_path[-2], shortest_path[-1]
                 for ports in [
                     ports
                     for (source, target, ports) in self.topo.edges(data=True)
                     if source == src_node and target == dst_node
                 ]:
-                    match = parser.OFPMatch(eth_type=0x0800, ipv4_dst=host_params["ip"])
-                    actions = [
-                        parser.OFPActionSetField(eth_dst=host_params["mac"]),
-                        parser.OFPActionOutput(ports["dst_port"]),
-                    ]
-                    self.__add_flow(datapath, 10, match, actions)
-
-                    # Правило для ARP-запросов
-                    match = parser.OFPMatch(eth_type=0x0806, arp_tpa=host_params["ip"])
-                    actions = [
-                        parser.OFPActionSetField(eth_dst=host_params["mac"]),
-                        parser.OFPActionOutput(ports["dst_port"]),
-                    ]
-                    self.__add_flow(datapath, 10, match, actions)
+                    self.routing_tables[ dpid ].append(
+                        (host_params["ip"], host_params["mac"], ports["dst_port"])
+                    )
 
     def __add_flow(
         self, datapath, priority, match, actions, idle_timeout=0, hard_timeout=0
     ):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
-
         inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
 
         mod = parser.OFPFlowMod(
