@@ -14,6 +14,9 @@ from os_ken.lib.dpid import dpid_to_str
 from os_ken.lib import hub
 from os_ken.lib.packet import packet, ethernet, lldp
 
+# Descovery state
+destate = True
+
 
 class Controller(OSKenApp):
 
@@ -22,12 +25,12 @@ class Controller(OSKenApp):
     def __init__(self, *args, **kwargs):
         super(Controller, self).__init__(*args, **kwargs)
 
-        self.topo = pickle.load(open("filename.pickle", "rb"))
-        # self.topo = nx.DiGraph()
-
+        self.topo = (
+            pickle.load(open("topograph.pickle", "rb")) if destate else nx.DiGraph()
+        )
+        self.datapaths = dict()
         self.routing_tables = defaultdict(list)
 
-        self.datapaths = {}
         self.hosts = {
             "00:00:00:00:00:01": "h1",
             "00:00:00:00:00:02": "h2",
@@ -54,7 +57,6 @@ class Controller(OSKenApp):
         datapath = ev.msg.datapath
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
-
         self.datapaths[datapath.id] = datapath
 
         eth_types = [0x88CC, 0x0800, 0x0806]
@@ -126,7 +128,6 @@ class Controller(OSKenApp):
                 data=pkt.data,
             )
             datapath.send_msg(out)
-            # print(f"[LLDP] Sent from DPID={dpid} port={port.port_no}")
 
     def send_features_request(self, datapath):
         parser = datapath.ofproto_parser
@@ -159,9 +160,6 @@ class Controller(OSKenApp):
                     neighbor_dpid = int(tlv.chassis_id.decode())
                 elif isinstance(tlv, lldp.PortID):
                     neighbor_port = int(tlv.port_id.decode())
-            # print(
-            #     f"Link discovered: {dpid}:{in_port} -> {neighbor_dpid}:{neighbor_port}"
-            # )
 
             self.topo.add_edge(
                 f"s{int(dpid)}",
@@ -175,8 +173,6 @@ class Controller(OSKenApp):
                 src_port=neighbor_port,
                 dst_port=in_port,
             )
-
-
 
         msg = ev.msg
         parser = msg.datapath.ofproto_parser
@@ -200,18 +196,21 @@ class Controller(OSKenApp):
                     self.hosts[src_mac], f"s{int(dpid)}", src_port=0, dst_port=in_port
                 )
 
-                # pickle.dump(self.topo, open("filename.pickle", "wb"))
+                if not destate:
+                    pickle.dump(self.topo, open("topograph.pickle", "wb"))
 
             ip_pkt = pkt.get_protocol(ipv4.ipv4)
             if eth.ethertype in (0x0800, 0x0806):  # IPv4 или ARP
                 print(
                     f"[HOST] Discovered host {src_mac} on switch {dpid} port {in_port} ip_pkt {ip_pkt}"
                 )
-        
-        if dpid in self.routing_tables:
-            table = self.routing_tables[ dpid ]
 
-            for ip, mac, port in table:
+        if dpid in self.routing_tables:
+            for ip, mac, port in self.routing_tables[dpid]:
+
+                if not destate:
+                    continue
+
                 match = parser.OFPMatch(eth_type=0x0800, ipv4_dst=ip)
                 actions = [
                     parser.OFPActionSetField(eth_dst=mac),
@@ -229,7 +228,7 @@ class Controller(OSKenApp):
 
     def reroute(self, datapath):
         dpid = datapath.id
-    
+
         for switch_name, _ in [
             (name, params)
             for name, params in self.topo.nodes(data=True)
@@ -256,14 +255,14 @@ class Controller(OSKenApp):
                 print(
                     f"[MSG] switch_name: {switch_name} host_name: {host_name} shortest_path: {shortest_path}"
                 )
-                
+
                 src_node, dst_node = shortest_path[-2], shortest_path[-1]
                 for ports in [
                     ports
                     for (source, target, ports) in self.topo.edges(data=True)
                     if source == src_node and target == dst_node
                 ]:
-                    self.routing_tables[ dpid ].append(
+                    self.routing_tables[dpid].append(
                         (host_params["ip"], host_params["mac"], ports["dst_port"])
                     )
 
