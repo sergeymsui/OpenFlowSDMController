@@ -7,6 +7,8 @@ from os_ken.ofproto import ofproto_v1_3
 from os_ken.lib.packet import packet, ethernet, ipv4, arp
 from os_ken.lib.dpid import dpid_to_str
 import ipaddress
+from os_ken.lib import hub
+from time import sleep
 
 
 class Controller(OSKenApp):
@@ -19,36 +21,67 @@ class Controller(OSKenApp):
         # Отдельные таблицы маршрутов для каждого коммутатора (по DPID)
         self.routing_tables = {
             1: {
-                "10.0.0.1/32": (1, "00:00:00:00:00:01", None),
-                "10.0.0.2/32": (2, "00:00:00:00:00:02", None),
-                "10.0.0.3/32": (3, "00:00:00:00:00:03", None),
-                "10.0.0.4/32": (4, "00:00:00:00:00:04", None),
+                "10.0.0.1": (1, "00:00:00:00:00:01", None),
+                "10.0.0.2": (2, "00:00:00:00:00:02", None),
+                "10.0.0.3": (3, "00:00:00:00:00:03", None),
+                "10.0.0.4": (4, "00:00:00:00:00:04", None),
             },
             2: {
-                "10.0.0.3/32": (2, "00:00:00:00:00:03", None),
-                "10.0.0.4/32": (2, "00:00:00:00:00:04", None),
-                "10.0.0.1/32": (1, "00:00:00:00:00:01", None),
-                "10.0.0.2/32": (1, "00:00:00:00:00:02", None),
+                "10.0.0.3": (2, "00:00:00:00:00:03", None),
+                "10.0.0.4": (2, "00:00:00:00:00:04", None),
+                "10.0.0.1": (1, "00:00:00:00:00:01", None),
+                "10.0.0.2": (1, "00:00:00:00:00:02", None),
             },
             3: {
-                "10.0.0.3/32": (2, "00:00:00:00:00:03", None),
-                "10.0.0.4/32": (2, "00:00:00:00:00:04", None),
-                "10.0.0.1/32": (1, "00:00:00:00:00:01", None),
-                "10.0.0.2/32": (1, "00:00:00:00:00:02", None),
+                "10.0.0.3": (2, "00:00:00:00:00:03", None),
+                "10.0.0.4": (2, "00:00:00:00:00:04", None),
+                "10.0.0.1": (1, "00:00:00:00:00:01", None),
+                "10.0.0.2": (1, "00:00:00:00:00:02", None),
             },
             4: {
-                "10.0.0.3/32": (2, "00:00:00:00:00:03", None),
-                "10.0.0.4/32": (2, "00:00:00:00:00:04", None),
-                "10.0.0.1/32": (1, "00:00:00:00:00:01", None),
-                "10.0.0.2/32": (1, "00:00:00:00:00:02", None),
+                "10.0.0.3": (2, "00:00:00:00:00:03", None),
+                "10.0.0.4": (2, "00:00:00:00:00:04", None),
+                "10.0.0.1": (1, "00:00:00:00:00:01", None),
+                "10.0.0.2": (1, "00:00:00:00:00:02", None),
             },
             5: {
-                "10.0.0.3/32": (4, "00:00:00:00:00:03", None),
-                "10.0.0.4/32": (5, "00:00:00:00:00:04", None),
-                "10.0.0.1/32": (2, "00:00:00:00:00:01", None),
-                "10.0.0.2/32": (2, "00:00:00:00:00:02", None),
+                "10.0.0.3": (4, "00:00:00:00:00:03", None),
+                "10.0.0.4": (5, "00:00:00:00:00:04", None),
+                "10.0.0.1": (2, "00:00:00:00:00:01", None),
+                "10.0.0.2": (2, "00:00:00:00:00:02", None),
             },
         }
+
+        self.deflag = True
+        self.datapaths = {}
+
+        def reroute(self):
+            while True:
+                dpid = 1
+                table = self.routing_tables[dpid]
+                for ip, (_, mac, tcp_port) in [
+                    (ip, params) for (ip, params) in table.items() if ip == "10.0.0.3"
+                ]:
+                    out_port = 5 if self.deflag else 4
+                    self.routing_tables[dpid][ip] = (out_port, mac, tcp_port)
+                    self.deflag = not self.deflag
+
+                    if dpid in self.datapaths:
+                        datapath = self.datapaths[dpid]
+                        parser = datapath.ofproto_parser
+
+                        match = parser.OFPMatch(eth_type=0x0800, ipv4_dst=ip)
+
+                        actions = [
+                            parser.OFPActionSetField(eth_dst=mac),
+                            parser.OFPActionOutput(out_port),
+                        ]
+                        self.__add_flow(datapath, 10, match, actions)
+                        print(f"[MSG] Change port to {out_port}")
+
+                sleep(10)
+
+        hub.spawn(reroute, self)
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def features_handler(self, ev):
@@ -62,6 +95,7 @@ class Controller(OSKenApp):
         parser = datapath.ofproto_parser
 
         dpid = datapath.id
+        self.datapaths[dpid] = datapath
         if dpid not in self.routing_tables:
             self.logger.warning("No routing table for switch %s", dpid_to_str(dpid))
             return
