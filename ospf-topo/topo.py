@@ -68,6 +68,11 @@ def run():
         "ospfd -f /usr/local/etc/r2ospfd.conf -d -z /tmp/r2zebra.api -i /tmp/r2ospfd.pid --user=root --group=root"
     )
 
+    info("*** Routing Table on r1:\n")
+    info(r1.cmd("route -n"))
+    info("*** Routing Table on r2:\n")
+    info(r2.cmd("route -n"))
+
     CLI(net)
     net.stop()
     os.system("killall -9 ospfd zebra")

@@ -142,7 +142,7 @@ class Controller(OSKenApp):
                             and params["type"] == "switch"
                             and name == dst_node
                         ]:
-                            # Заносим 
+                            # Заносим данные в таблицу маршрутизации
                             self.routing_tables[switch_params["dpid"]].add(
                                 (
                                     host_params["ip"],
