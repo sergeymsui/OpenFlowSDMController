@@ -14,7 +14,7 @@ from os_ken.lib.dpid import dpid_to_str
 from os_ken.lib import hub
 from os_ken.lib.packet import packet, ethernet, lldp
 
-from utils import generate_ilp_flows
+from utils import generate_ilp_flows, generate_greedy_flows, generate_msa_flows
 
 # Flow state
 flowstate = True
@@ -78,7 +78,8 @@ class Controller(OSKenApp):
         # Обновление маршрутов в таблице маршрутизации
         # self.reroute(datapath)
 
-        self.update_routes()
+        if flowstate:
+            self.update_routes()
 
     def update_routes(self):
         match_flows = [
@@ -114,7 +115,9 @@ class Controller(OSKenApp):
         for src, dst, _ in match_flows:
             targets_list.append((src, dst))
 
-        flows = generate_ilp_flows(self.topo, targets_list)
+        # flows = generate_ilp_flows(self.topo, targets_list)
+        # flows = generate_greedy_flows(self.topo, targets_list)
+        flows = generate_msa_flows(self.topo, targets_list)
 
         # Для каждого потока берем idx и его маршрут
         for idx, path in flows.items():
@@ -286,7 +289,6 @@ class Controller(OSKenApp):
                     f"[HOST] Discovered host {src_mac} on switch {dpid} port {in_port} ip_pkt {ip_pkt}"
                 )
 
-        print("====================================")
         if dpid in self.routing_tables:
             for ip, mac, out_port, tcp_port in self.routing_tables[dpid]:
 
@@ -342,6 +344,8 @@ class Controller(OSKenApp):
                         )
                     ]
                 except nx.exception.NetworkXNoPath:
+                    continue
+                except nx.exception.NodeNotFound:
                     continue
 
                 print(

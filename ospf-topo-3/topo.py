@@ -32,10 +32,18 @@ class CustomTopo(Topo):
         h4 = self.addHost("h4", ip="10.0.4.10/24", defaultRoute="via 10.0.4.1")
 
         # Host links
+
         self.addLink(h1, routers["s1"], params2={"ip": "10.0.1.1/24"})
         self.addLink(h2, routers["s2"], params2={"ip": "10.0.2.1/24"})
-        self.addLink(h3, routers["s9"], params2={"ip": "10.0.3.1/24"})
-        self.addLink(h4, routers["s8"], params2={"ip": "10.0.4.1/24"})
+
+        sw1 = self.addSwitch("sw1", failMode="standalone")
+        sw2 = self.addSwitch("sw2", failMode="standalone")
+
+        self.addLink(sw1, h3)
+        self.addLink(sw2, h4)
+
+        self.addLink(sw1, routers["s9"], params2={"ip": "10.0.3.1/24"})
+        self.addLink(sw2, routers["s8"], params2={"ip": "10.0.4.1/24"})
 
         links = [
             ("s1", "s3"),

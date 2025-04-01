@@ -1,6 +1,7 @@
 import pulp
 from collections import defaultdict
 import networkx as nx
+from data_handler_config import DataHandlerConfig
 
 
 def generate_ilp_flows(topo, targets_list):
@@ -88,5 +89,299 @@ def generate_ilp_flows(topo, targets_list):
     for path in path_set:
         max_load = max([edge_load[edge] for edge in list(zip(path, path[1:]))])
         print(f"Max load: {max_load} for path {path}")
+
+    return all_flows
+
+
+def generate_greedy_flows(topo, targets_list):
+
+    flows = list()
+    for _, [src, dst] in enumerate(targets_list):
+        flows.append((src, dst))
+
+    # Функция для нахождения всех кратчайших путей
+    def find_all_shortest_paths(topo, source, target):
+        return list(nx.all_shortest_paths(topo, source=source, target=target))
+
+    # Построение множества всех кратчайших путей для каждого потока
+    flow_paths = []
+    for idx, (s, t) in enumerate(flows):
+        paths = find_all_shortest_paths(topo, s, t)
+        flow_paths.append({"flow_id": idx, "source": s, "target": t, "paths": paths})
+
+    flow_paths.sort(key=lambda x: len(x["paths"]))
+
+    R = nx.DiGraph()
+
+    for [u, v] in topo.edges():
+        R.add_edge(u, v, edge_load=0)
+        R.add_edge(v, u, edge_load=0)
+
+    # Функция для выбора лучшего пути для потока
+    def select_best_path(flow, graph):
+        min_max_load = float("inf")
+        best_path = None
+        for path in flow["paths"]:
+            # Найти максимальную загрузку на пути
+            current_max = max(
+                [graph[u][v]["edge_load"] for [u, v] in list(zip(path, path[1:]))]
+            )
+            if current_max < min_max_load:
+                min_max_load = current_max
+                best_path = path
+        return best_path
+
+    print("Step 4")
+
+    # Назначение потоков
+    assignment = {}
+    for flow in flow_paths:
+        best_path = select_best_path(flow, R)
+        assignment[flow["flow_id"]] = best_path
+        # Обновление загрузки каналов
+        for [u, v] in list(zip(best_path, best_path[1:])):
+            R[u][v]["edge_load"] += 1
+
+    print("Step 5")
+
+    # Определение максимальной загрузки
+    max_load = max([R[u][v]["edge_load"] for [u, v] in R.edges()])
+
+    # Вывод результатов
+    print(f"Минимальное максимальное количество потоков на канале: {max_load}\n")
+
+    all_flows = dict()
+
+    for flow_id, path in assignment.items():
+        src, dst = flows[flow_id]
+        all_flows[flow_id] = path
+        print(f"Поток {flow_id} назначен на путь: {' -> '.join(map(str, path))}")
+
+    # Дополнительно: Вывод загрузки каналов
+    print("\nЗагрузка каналов:")
+
+    for [u, v] in R.edges():
+        edge_load = R[u][v]["edge_load"]
+        print(f"Канал {u}-{v}: {edge_load} поток(ов)")
+
+    return all_flows
+
+
+# =======================================================================================
+
+
+def msa_lambda(i):
+    return 1 / (i + 1)
+
+
+def msa_t(x):
+    return 10 + x / 100
+
+
+def msa(config):
+    x = nx.Graph()
+    x_s = nx.Graph()
+
+    OLD_AEC = None
+
+    edges = []
+
+    for [u, v] in config.getLinks():
+        edges.append((u, v))
+
+    for u, v in edges:
+        x.add_edge(u, v, weight=0, time=msa_t(0))
+
+    for u, v in edges:
+        x_s.add_edge(u, v, weight=0)
+
+    for [[o, d], w] in config.getCorrespondence():
+        dijkstra_path = nx.dijkstra_path(x, o, d, weight="time")
+
+        j = 1
+        while j < len(dijkstra_path):
+            u = dijkstra_path[j - 1]
+            v = dijkstra_path[j]
+
+            x[u][v]["weight"] += w
+            x_s[u][v]["weight"] += w
+
+            x[u][v]["time"] = msa_t(x[u][v]["weight"])
+
+            j += 1
+
+    i = 1
+    while i < 1000:
+
+        tx = 0
+        for u, v in edges:
+            tx += x[u][v]["weight"] * x[u][v]["time"]
+
+        kq = 0
+        for [[o, d], w] in config.getCorrespondence():
+            dijkstra_path = nx.dijkstra_path(x, o, d, weight="time")
+
+            t = 0
+            j = 1
+            while j < len(dijkstra_path):
+                u = dijkstra_path[j - 1]
+                v = dijkstra_path[j]
+
+                t += x[u][v]["time"]
+
+                j += 1
+
+            kq += t * w
+
+        wc = 0
+        for [[o, d], w] in config.getCorrespondence():
+            wc += w
+
+        AEC = (tx - kq) / wc
+
+        if OLD_AEC:
+            if abs(OLD_AEC - AEC) < 0.1:
+                break
+
+        OLD_AEC = AEC
+
+        for u, v in edges:
+            x_s[u][v]["weight"] = 0
+
+        for [[o, d], w] in config.getCorrespondence():
+            dijkstra_path = nx.dijkstra_path(x, o, d, weight="time")
+
+            j = 1
+            while j < len(dijkstra_path):
+                u = dijkstra_path[j - 1]
+                v = dijkstra_path[j]
+
+                x_s[u][v]["weight"] += w
+
+                j += 1
+
+        l = msa_lambda(i)
+        for u, v in edges:
+            x[u][v]["weight"] = l * x_s[u][v]["weight"] + (1 - l) * x[u][v]["weight"]
+            x[u][v]["time"] = msa_t(x[u][v]["weight"])
+
+        i += 1
+
+    result = dict()
+    result["flows"] = [x[u][v]["weight"] for u, v in edges]
+    result["links"] = [[u, v] for [u, v] in config.getLinks()]
+
+    return result
+
+
+def networkx_flow_decomposition(result, correspondence):
+
+    links = result["links"]
+    flows = result["flows"]
+
+    auxiliary = nx.DiGraph()
+    for [u, v] in links:
+        auxiliary.add_edge(u, v, flow=0)
+
+    residual = nx.DiGraph()
+    for [u, v] in links:
+        residual.add_edge(u, v, flow=0)
+
+    for i, [u, v] in enumerate(links):
+        residual[u][v]["flow"] += flows[i]
+
+    inner_flows = defaultdict(int)
+
+    total_correspondence = 0
+    for [_, w] in correspondence:
+        total_correspondence += w
+
+    def full_flow_weight(common_correspondence):
+        return sum(common_correspondence)
+
+    eps = 1
+    step = 1
+    common_correspondence = [0 for _ in correspondence]
+
+    while (total_correspondence - full_flow_weight(common_correspondence)) > eps:
+
+        for i, [[src, dst], _] in enumerate(correspondence):
+
+            # TODO: сделать список уже заполненных потоков (для повышения точности)
+            simple_paths = [path for path in nx.all_shortest_paths(auxiliary, src, dst)]
+
+            diff_max_weight, diff_max_path = 0, []
+            for path in simple_paths:
+                min_residual_weight = min(
+                    [residual[u][v]["flow"] for u, v in list(zip(path[:-1], path[1:]))]
+                )
+                min_auxiliary_weight = min(
+                    [auxiliary[u][v]["flow"] for u, v in list(zip(path[:-1], path[1:]))]
+                )
+
+                diff = min_residual_weight - min_auxiliary_weight
+
+                if diff > diff_max_weight:
+                    diff_max_path = path
+
+            if not len(diff_max_path):
+                continue
+
+            orig_path = diff_max_path
+
+            print(
+                "Abs = ",
+                (total_correspondence - full_flow_weight(common_correspondence)),
+            )
+            print(" common_correspondence = ", common_correspondence)
+            print("target_correspondence = ", [w for [_, w] in correspondence])
+
+            if len(orig_path):
+
+                additional = step
+
+                for u, v in list(zip(orig_path[:-1], orig_path[1:])):
+                    auxiliary[u][v]["flow"] += additional
+
+                common_correspondence[i] += additional
+                inner_flows[(src, dst, tuple(orig_path))] += additional
+
+            if (total_correspondence - full_flow_weight(common_correspondence)) <= eps:
+                break
+
+    return inner_flows
+
+
+def generate_msa_flows(
+    topo,
+    targets_list,
+):
+    all_flows = dict()
+
+    config = DataHandlerConfig()
+    config.setGraphTableData(
+        links=topo.edges(),
+        first_thru_node=1,
+    )
+
+    correspondence = list()
+    for _, [src, dst] in enumerate(targets_list):
+        correspondence.append([[src, dst], 1])
+
+    config.setZonesNumber(len(correspondence))
+    config.setCorrespondence(correspondence)
+    config.setFlows([d for d, _ in correspondence])
+
+    result = msa(config)
+
+    dflows = networkx_flow_decomposition(result, correspondence)
+
+    for idx, [[src, dst], _] in enumerate(correspondence):
+
+        for key in dflows.keys():
+            (s, d, path) = key
+
+            if src == s and dst == d:
+                all_flows[idx] = path
 
     return all_flows
