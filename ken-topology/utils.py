@@ -299,7 +299,7 @@ def networkx_flow_decomposition(result, correspondence):
     def full_flow_weight(common_correspondence):
         return sum(common_correspondence)
 
-    eps = 1
+    eps = 0
     step = 1
     common_correspondence = [0 for _ in correspondence]
 
@@ -356,6 +356,7 @@ def generate_msa_flows(
     topo,
     targets_list,
 ):
+    print("Generate flows")
     all_flows = dict()
 
     config = DataHandlerConfig()

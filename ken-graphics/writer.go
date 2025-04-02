@@ -14,8 +14,8 @@ import (
 )
 
 func main() {
-	inputFile := "D:/grd-s9-eth1.pcap"
-	outputFile := "./grd-s9-eth1_tcp_stats.csv"
+	inputFile := "D:/msa-s8-eth1.pcap"
+	outputFile := "./msa-s8-eth1_tcp_stats.csv"
 
 	// Открытие pcapng файла
 	handle, err := os.Open(inputFile)
@@ -47,7 +47,6 @@ func main() {
 		// Получение TCP слоя
 		if tcpLayer := packet.Layer(layers.LayerTypeTCP); tcpLayer != nil {
 			tcp, _ := tcpLayer.(*layers.TCP)
-
 
 			// Фильтрация портов
 			if inPortRange(tcp.SrcPort, 9080, 9090) || inPortRange(tcp.DstPort, 9080, 9090) {

@@ -73,11 +73,11 @@ class DataHandlerConfig:
             raise "Data size does not match"
 
         graph_table["init_node_thru"] = [
-            init_node >= first_thru_node for init_node in graph_table["init_node"]
+            True for init_node in graph_table["init_node"]
         ]
 
         graph_table["term_node_thru"] = [
-            term_node >= first_thru_node for term_node in graph_table["term_node"]
+            True for term_node in graph_table["term_node"]
         ]
 
         self.graph_table = graph_table

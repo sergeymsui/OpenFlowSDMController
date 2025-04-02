@@ -56,6 +56,8 @@ class Controller(OSKenApp):
         the controller. This acts as a rule for flow-table misses.
         """
 
+        print("features_handler")
+
         datapath = ev.msg.datapath
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
@@ -122,6 +124,8 @@ class Controller(OSKenApp):
         # Для каждого потока берем idx и его маршрут
         for idx, path in flows.items():
             _, _, tcp_port = match_flows[idx]
+
+            print(f"[MSG] idx: {idx} path: {path}")
 
             # Находим хост получатель - последный в списке маршрутов
             # Для занесения IP адреса и порта используется значение из `host_params`
@@ -358,7 +362,7 @@ class Controller(OSKenApp):
                     for (source, target, ports) in self.topo.edges(data=True)
                     if source == src_node and target == dst_node
                 ]:
-                    self.routing_tables[dpid].append(
+                    self.routing_tables[dpid].add(
                         (host_params["ip"], host_params["mac"], ports["dst_port"], None)
                     )
 

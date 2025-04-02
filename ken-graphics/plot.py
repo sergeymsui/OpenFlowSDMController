@@ -60,6 +60,6 @@ def plot_bandwidth_timeline(bandwidth_by_time):
     plt.show()
 
 if __name__ == "__main__":
-    csv_file = "grd-s9-eth1_tcp_stats.csv"
+    csv_file = "msa-s9-eth1_tcp_stats.csv"
     bandwidth_by_time = load_bandwidth_by_time(csv_file, interval='second')  # можно поменять на 'minute'
     plot_bandwidth_timeline(bandwidth_by_time)
