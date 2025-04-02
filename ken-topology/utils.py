@@ -1,7 +1,7 @@
 import pulp
 from collections import defaultdict
 import networkx as nx
-from data_handler_config import DataHandlerConfig
+from sdm.data_handler_config import DataHandlerConfig
 
 
 def generate_ilp_flows(topo, targets_list):
@@ -373,11 +373,94 @@ def generate_msa_flows(
     config.setFlows([d for d, _ in correspondence])
 
     result = msa(config)
-
     dflows = networkx_flow_decomposition(result, correspondence)
 
     for idx, [[src, dst], _] in enumerate(correspondence):
 
+        for key in dflows.keys():
+            (s, d, path) = key
+
+            if src == s and dst == d:
+                all_flows[idx] = path
+
+    return all_flows
+
+import time
+import numpy as np
+from sdm.data_handler import DataHandler
+from sdm.model import Model
+
+def fwa(config):
+    max_iter = 1000
+
+    handler = DataHandler()
+    graph_data = handler.GetGraphData(config)
+
+    graph_correspondences, total_od_flow = handler.GetGraphCorrespondences(config)
+
+    print("graph_correspondences = ", graph_correspondences)
+    print("total_od_flow = ", total_od_flow)
+
+    model = Model(graph_data, graph_correspondences, total_od_flow, mu=0.25, rho=0.15)
+
+    print("Frank-Wolfe without stopping criteria")
+    solver_kwargs = {
+        "max_iter": max_iter,
+        "stop_crit": "max_iter",
+        "verbose": True,
+        "verbose_step": 200,
+        "save_history": True,
+    }
+    tic = time.time()
+    result = model.find_equilibrium(solver_name="fwm", solver_kwargs=solver_kwargs)
+    toc = time.time()
+    print("Elapsed time: {:.0f} sec".format(toc - tic))
+    print(
+        "Time ratio =",
+        np.max(result["times"] / graph_data["graph_table"]["free_flow_time"]),
+    )
+    print(
+        "Flow excess =",
+        np.max(result["flows"] / graph_data["graph_table"]["capacity"]) - 1,
+        end="\n\n",
+    )
+
+    result["links"] = config.getLinks()
+
+    print("times:", result["times"])
+    print("flows:", result["flows"])
+    print("links:", result["links"])
+
+    return result
+
+def generate_fwa_flows(
+    topo,
+    targets_list,
+):
+    """ """
+
+    all_flows = dict()
+
+    config = DataHandlerConfig()
+    config.setGraphTableData(
+        links=topo.edges(),
+        first_thru_node=1,
+    )
+
+    correspondence = list()
+
+    for _, [src, dst] in enumerate(targets_list):
+        correspondence.append([[src, dst], 1])
+
+    config.setZonesNumber(len(correspondence))
+    config.setCorrespondence(correspondence)
+    config.setFlows([d for d, _ in correspondence])
+
+    result = fwa(config)
+
+    dflows = networkx_flow_decomposition(result, correspondence)
+
+    for idx, [[src, dst], _] in enumerate(correspondence):
         for key in dflows.keys():
             (s, d, path) = key
 
