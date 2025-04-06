@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 
 import pickle
+from threading import Thread
+
 import networkx as nx
 from time import sleep
 from collections import defaultdict
@@ -14,7 +16,7 @@ from os_ken.lib.dpid import dpid_to_str
 from os_ken.lib import hub
 from os_ken.lib.packet import packet, ethernet, lldp
 
-from utils import generate_ilp_flows, generate_greedy_flows, generate_msa_flows
+from utils import generate_ilp_flows, generate_greedy_flows, generate_msa_flows, generate_fwa_flows
 
 # Flow state
 flowstate = True
@@ -44,6 +46,14 @@ class Controller(OSKenApp):
             while True:
                 sleep(10)
 
+        def process(target):
+            print("Wait calculation process")
+            sleep(5)
+            print("Calculate...")
+            target.update_routes()
+
+        self._delayed_update_thread = Thread(target=process, args=(self,))
+
         hub.spawn(show)
         hub.spawn(self._lldp_loop)
 
@@ -55,8 +65,6 @@ class Controller(OSKenApp):
         Installs a low level (0) flow table modification that pushes packets to
         the controller. This acts as a rule for flow-table misses.
         """
-
-        print("features_handler")
 
         datapath = ev.msg.datapath
         ofproto = datapath.ofproto
@@ -81,7 +89,15 @@ class Controller(OSKenApp):
         # self.reroute(datapath)
 
         if flowstate:
-            self.update_routes()
+            # self.update_routes()
+            self.schedule_update_routes()
+
+    def schedule_update_routes(self):
+        # Если уже идёт ожидание — сбрасываем его и запускаем заново
+        if self._delayed_update_thread.is_alive():
+            pass
+        else:
+            self._delayed_update_thread.start()
 
     def update_routes(self):
         match_flows = [
@@ -119,7 +135,8 @@ class Controller(OSKenApp):
 
         # flows = generate_ilp_flows(self.topo, targets_list)
         # flows = generate_greedy_flows(self.topo, targets_list)
-        flows = generate_msa_flows(self.topo, targets_list)
+        # flows = generate_msa_flows(self.topo, targets_list)
+        flows = generate_fwa_flows(self.topo, targets_list)
 
         # Для каждого потока берем idx и его маршрут
         for idx, path in flows.items():

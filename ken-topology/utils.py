@@ -273,6 +273,66 @@ def msa(config):
 
     return result
 
+import heapq
+import itertools
+from collections import defaultdict
+
+def networkx_flow_decomposition_fwa(result, correspondence, k_paths=10):
+    links = result["links"]
+    flows = result["flows"]
+
+    # Построим граф с весами из flows
+    G = nx.DiGraph()
+    for (u, v), flow in zip(links, flows):
+        if flow > 1e-6:
+            G.add_edge(u, v, weight=1.0 / (flow + 1e-6), flow=flow)  # "желаемое направление"
+
+    # Добавим обратные потоки
+    full_corr = []
+    for [src_dst, demand] in correspondence:
+        src, dst = src_dst
+        full_corr.append([[src, dst], demand])
+        full_corr.append([[dst, src], demand])  # ответ сервера
+
+    edge_load = defaultdict(int)  # сколько потоков по рёбрам
+    inner_flows = defaultdict(int)
+
+    for [src_dst, demand] in full_corr:
+        src, dst = src_dst
+
+        # Найдём k кратчайших путей по "желаемой" метрике (инверсии потока)
+        try:
+            paths = list(itertools.islice(nx.shortest_simple_paths(G, src, dst, weight='weight'), k_paths))
+        except nx.NetworkXNoPath:
+            print(f"❌ No path between {src} and {dst}")
+            continue
+
+        # Оценим каждый путь: насколько хорошо он соответствует расчетному распределению потоков
+        def path_score(path):
+            return sum(1.0 / (G[u][v]['flow'] + 1e-6) for u, v in zip(path[:-1], path[1:]))
+
+        scored_paths = [(path_score(p), p) for p in paths]
+        heapq.heapify(scored_paths)
+
+        # Распределим потоки по путям пропорционально весу (жадно, дискретно)
+        for _ in range(demand):
+            _, best_path = heapq.heappop(scored_paths)
+
+            # Увеличим нагрузку по рёбрам
+            for u, v in zip(best_path[:-1], best_path[1:]):
+                edge_load[(u, v)] += 1
+
+            # Зарегистрируем поток
+            inner_flows[(src, dst, tuple(best_path))] += 1
+
+            # Обновим оценку этого пути и вернём в очередь
+            new_score = sum(
+                (edge_load[(u, v)] + 1) / (G[u][v]['flow'] + 1e-6)
+                for u, v in zip(best_path[:-1], best_path[1:])
+            )
+            heapq.heappush(scored_paths, (new_score, best_path))
+
+    return inner_flows
 
 def networkx_flow_decomposition(result, correspondence):
 
@@ -438,8 +498,6 @@ def generate_fwa_flows(
     topo,
     targets_list,
 ):
-    """ """
-
     all_flows = dict()
 
     config = DataHandlerConfig()
@@ -450,22 +508,33 @@ def generate_fwa_flows(
 
     correspondence = list()
 
-    for _, [src, dst] in enumerate(targets_list):
-        correspondence.append([[src, dst], 1])
+    # for _, [src, dst] in enumerate(targets_list):
+    #     correspondence.append([[src, dst], 1])
+
+    correspondence.append([["h1", "h3"], 10])
+    correspondence.append([["h2", "h4"], 10])
 
     config.setZonesNumber(len(correspondence))
     config.setCorrespondence(correspondence)
     config.setFlows([d for d, _ in correspondence])
 
     result = fwa(config)
+    dflows = networkx_flow_decomposition_fwa(result, correspondence)
 
-    dflows = networkx_flow_decomposition(result, correspondence)
+    for trace, flow in dflows.items():
+        print(f"trace: {trace}, flow: {flow}")
 
-    for idx, [[src, dst], _] in enumerate(correspondence):
-        for key in dflows.keys():
-            (s, d, path) = key
+    # for idx, [[src, dst], _] in enumerate(correspondence):
+    #     for key in dflows.keys():
+    #         (s, d, path) = key
+    #
+    #         if src == s and dst == d:
+    #             all_flows[idx] = path
 
-            if src == s and dst == d:
-                all_flows[idx] = path
+    idx = 0
+    for (src, dst, (path)), flow in dflows.items():
+        all_flows[idx] = list(path)
+        all_flows[idx+1] = list(path) [::-1]
+        idx += 2
 
     return all_flows
