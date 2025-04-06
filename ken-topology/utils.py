@@ -524,17 +524,165 @@ def generate_fwa_flows(
     for trace, flow in dflows.items():
         print(f"trace: {trace}, flow: {flow}")
 
-    # for idx, [[src, dst], _] in enumerate(correspondence):
-    #     for key in dflows.keys():
-    #         (s, d, path) = key
-    #
-    #         if src == s and dst == d:
-    #             all_flows[idx] = path
+    idx, path_list = 0, list()
 
-    idx = 0
     for (src, dst, (path)), flow in dflows.items():
-        all_flows[idx] = list(path)
-        all_flows[idx+1] = list(path) [::-1]
-        idx += 2
+        mpath = list(path)
+        for _ in range(flow):
+            all_flows[idx] = mpath
+            idx += 1
+
+        if mpath not in path_list:
+            path_list.append(mpath)
+    
+    for mpath in path_list:
+        all_flows[idx] = mpath[::-1]
+        idx += 1
+
+    return all_flows
+
+def ustm(config):
+
+    handler = DataHandler()
+    graph_data = handler.GetGraphData(config)
+
+    graph_correspondences, total_od_flow = handler.GetGraphCorrespondences(config)
+
+    init_capacities = np.copy(graph_data["graph_table"]["capacity"])
+    print(graph_data["graph_table"].head())
+    # start from 0.5,  0.75, 0.875 (according to our flows reconstruction method)
+    alpha = 0.75
+    graph_data["graph_table"]["capacity"] = init_capacities * alpha
+    model = Model(graph_data, graph_correspondences, total_od_flow, mu=0)
+    graph_data["graph_table"].head()
+    print("model.mu == 0: ", (model.mu == 0))
+    max_iter = 1000
+    solver_kwargs = {
+        "eps_abs": 100,
+        "max_iter": max_iter,
+        "stop_crit": "max_iter",
+        "verbose": True,
+        "verbose_step": 500,
+        "save_history": True,
+    }
+    tic = time.time()
+    result = model.find_equilibrium(
+        solver_name="ustm",
+        composite=True,
+        solver_kwargs=solver_kwargs,
+        base_flows=alpha * graph_data["graph_table"]["capacity"],
+    )
+    # base_flows here doesn't define anything now
+    toc = time.time()
+    print("Elapsed time: {:.0f} sec".format(toc - tic))
+    print(
+        "Time ratio =",
+        np.max(result["times"] / graph_data["graph_table"]["free_flow_time"]),
+    )
+    print(
+        "Flow excess =",
+        np.max(result["flows"] / graph_data["graph_table"]["capacity"]) - 1,
+        end="\n\n",
+    )
+    result["elapsed_time"] = toc - tic
+    base_flows = result["flows"]
+    ## Step 2: SD Model solution
+    graph_data["graph_table"]["capacity"] = init_capacities
+    model = Model(graph_data, graph_correspondences, total_od_flow, mu=0)
+    graph_data["graph_table"].head()
+    # USTM method
+    max_iter = 1000
+    solver_kwargs = {
+        "eps_abs": 100,
+        "max_iter": max_iter,
+        "stop_crit": "max_iter",
+        "verbose": True,
+        "verbose_step": 400,
+        "save_history": True,
+    }
+    tic = time.time()
+    result = model.find_equilibrium(
+        solver_name="ustm",
+        composite=True,
+        solver_kwargs=solver_kwargs,
+        base_flows=base_flows,
+    )
+    toc = time.time()
+    print("Elapsed time: {:.0f} sec".format(toc - tic))
+    print(
+        "Time ratio =",
+        np.max(result["times"] / graph_data["graph_table"]["free_flow_time"]),
+    )
+    print(
+        "Flow excess =",
+        np.max(result["flows"] / graph_data["graph_table"]["capacity"]) - 1,
+        end="\n\n",
+    )
+    # NOTE: duality gap should be nonnegative here!
+
+    result["links"] = [[u, v] for [u, v] in config.getLinks()]
+
+    return result
+
+
+
+def generate_ustm_flows(
+    G: nx.Graph,
+    hosts,
+    nflows,
+    corr_weight,
+    size=None,
+    start_time=None,
+    finish_time=None,
+    arrival_dist=None,
+    size_dist=None,
+):
+    """ """
+
+    all_flows = dict()
+
+    config = DataHandlerConfig()
+    config.setGraphTableData(
+        links=G.edges(),
+        first_thru_node=1,
+    )
+
+    correspondence = list()
+
+    targets_list = long_path_targets(G, hosts, nflows)
+    for _, [src, dst] in enumerate(targets_list):
+        correspondence.append([[src, dst], nflows * corr_weight])
+
+    config.setZonesNumber(len(correspondence))
+    config.setCorrespondence(correspondence)
+    config.setFlows([d for d, _ in correspondence])
+
+    result = ustm(config)
+    dflows = networkx_flow_decomposition_fwa(result, correspondence)
+
+    for idx, [[src, dst], _] in enumerate(correspondence):
+
+        paths = list()
+        flows = list()
+
+        for key in dflows.keys():
+            (s, d, path) = key
+
+            if src == s and dst == d:
+                paths.append(list(path))
+                flows.append(dflows[key])
+
+        all_flows[idx] = DiffFlow(
+            idx,
+            src,
+            dst,
+            size=size,
+            flows=flows,
+            paths=paths,
+            start_time=start_time,
+            finish_time=finish_time,
+            arrival_dist=arrival_dist,
+            size_dist=size_dist,
+        )
 
     return all_flows
