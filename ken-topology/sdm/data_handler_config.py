@@ -59,7 +59,7 @@ class DataHandlerConfig:
         graph_table = {
             "init_node": init_node,
             "term_node": term_node,
-            "capacity": [10000 for _ in range(self.links_number)],
+            "capacity": [15 for _ in range(self.links_number)],
             "free_flow_time": [1 for _ in range(self.links_number)],
         }
 

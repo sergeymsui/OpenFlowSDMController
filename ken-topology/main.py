@@ -16,7 +16,7 @@ from os_ken.lib.dpid import dpid_to_str
 from os_ken.lib import hub
 from os_ken.lib.packet import packet, ethernet, lldp
 
-from utils import generate_ilp_flows, generate_greedy_flows, generate_msa_flows, generate_fwa_flows
+from utils import generate_ilp_flows, generate_greedy_flows, generate_msa_flows, generate_fwa_flows, generate_ustm_flows
 
 # Flow state
 flowstate = True
@@ -136,7 +136,8 @@ class Controller(OSKenApp):
         # flows = generate_ilp_flows(self.topo, targets_list)
         # flows = generate_greedy_flows(self.topo, targets_list)
         # flows = generate_msa_flows(self.topo, targets_list)
-        flows = generate_fwa_flows(self.topo, targets_list)
+        # flows = generate_fwa_flows(self.topo, targets_list)
+        flows = generate_ustm_flows(self.topo, targets_list)
 
         # Для каждого потока берем idx и его маршрут
         for idx, path in flows.items():
