@@ -14,8 +14,8 @@ import (
 )
 
 func main() {
-	inputFile := "D:/ustm-s8-eth1.pcap"
-	outputFile := "./ustm-s8-eth1_tcp_stats.csv"
+	inputFile := "D:/msa-s8-eth1.pcap"
+	outputFile := "./msa-s8-eth1_tcp_stats.csv"
 
 	// Открытие pcapng файла
 	handle, err := os.Open(inputFile)
