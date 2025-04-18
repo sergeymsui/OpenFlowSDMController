@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 import matplotlib.ticker as ticker
 import statistics
-import os
+from scipy.signal import savgol_filter
 
 def load_bandwidth_relative(csv_file, interval='second'):
     time_buckets = defaultdict(int)
@@ -79,13 +79,15 @@ def plot_multiple_bandwidth_series(file_list, interval='second', duration_limit=
         times = list(range(0, duration_limit + 1))
         values = [bandwidth.get(t, 0) for t in times]
 
+        n_values = savgol_filter(values, 17, 7)
+
         avg = statistics.mean(values) if values else 0
         label = name
 
-        line = ax.plot(times, values, label=f"{label} (Avg. {int(avg // 1_000_000):,} Мбит/с)", linewidth=2)[0]
+        line = ax.plot(times, n_values, label=f"{label} (Avg. {int(avg // 1_000_000):,} Мбит/с)", linewidth=2)[0]
         color = line.get_color()
 
-        ax.fill_between(times, values, color=color, alpha=0.1)
+        # ax.fill_between(times, values, color=color, alpha=0.1)
         ax.axhline(avg, linestyle='--', linewidth=1.5, color=color, alpha=0.8)
 
         y_pos = find_non_overlapping_y(avg)
@@ -119,8 +121,9 @@ def plot_multiple_bandwidth_series(file_list, interval='second', duration_limit=
     plt.show()
 
 if __name__ == "__main__":
-    switch = "s9"
+    switch = "s8"
     files = {
+        f"./simulator_data/load-aware-{switch}-eth1_tcp_stats.csv": "LOAD-AWARE",
         f"./simulator_data/ospf-{switch}-eth1_tcp_stats.csv": "OSPF",
         f"./simulator_data/ilp-{switch}-eth1_tcp_stats.csv": "ILP",
         f"./simulator_data/grd-{switch}-eth1_tcp_stats.csv": "GRD",
