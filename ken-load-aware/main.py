@@ -221,7 +221,8 @@ class Controller(OSKenApp):
                             if dpkey not in self.paths:
                                 self.paths[dpkey] = path
                                 continue
-                            elif dpkey in self.paths and self.paths[dpkey] != path:
+                            
+                            if dpkey in self.paths and self.paths[dpkey] != path:
                                 print(
                                     f"[>] change path for {dpkey} from {self.paths[dpkey]} to {path}"
                                 )
@@ -319,7 +320,7 @@ class Controller(OSKenApp):
                     for name, params in self.topo.nodes(data=True)
                     if "type" in params and params["type"] == "switch" and params["dpid"] == dpid
                     ]:
-                    for source, target, ports in [
+                    for source, target, _ in [
                         (source, target, ports)
                         for (source, target, ports) in self.topo.edges(data=True)
                         if source == switch_name and ports["src_port"] == port_no
