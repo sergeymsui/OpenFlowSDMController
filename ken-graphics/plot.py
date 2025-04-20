@@ -121,9 +121,9 @@ def plot_multiple_bandwidth_series(file_list, interval='second', duration_limit=
     plt.show()
 
 if __name__ == "__main__":
-    switch = "s8"
+    switch = "s9"
     files = {
-        f"./simulator_data/load-aware-{switch}-eth1_tcp_stats.csv": "LOAD-AWARE",
+        f"./simulator_data/load-aware-{switch}-eth1_tcp_stats.csv": "BMcW",
         f"./simulator_data/ospf-{switch}-eth1_tcp_stats.csv": "OSPF",
         f"./simulator_data/ilp-{switch}-eth1_tcp_stats.csv": "ILP",
         f"./simulator_data/grd-{switch}-eth1_tcp_stats.csv": "GRD",
