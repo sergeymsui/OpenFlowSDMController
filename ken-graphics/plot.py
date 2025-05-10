@@ -51,9 +51,9 @@ def compact_bytes(x, pos):
 
     return f"{x:.0f} P"
 
-def plot_multiple_bandwidth_series(file_list, interval='second', duration_limit=300):
+def plot_multiple_bandwidth_series(file_list, interval='second', start_time=100, end_time=300):
     multiplicit = 1.3
-    plt.figure(figsize=(14*multiplicit, 6*multiplicit))
+    plt.figure(figsize=(12*multiplicit, 5*multiplicit))
     ax = plt.gca()
 
     label_padding = 5
@@ -71,28 +71,33 @@ def plot_multiple_bandwidth_series(file_list, interval='second', duration_limit=
         return y_center
 
     label_anchor = 10
+    m_val = 0
     for csv_file, name in file_list.items():
         bandwidth = load_bandwidth_relative(csv_file, interval=interval)
-        bandwidth = {t: v for t, v in bandwidth.items() if t <= duration_limit}
+        bandwidth = {t: v for t, v in bandwidth.items() if start_time <= t <= end_time}
 
-        # Дополним нулями пропущенные секунды
-        times = list(range(0, duration_limit + 1))
+        times = list(range(start_time, end_time + 1))
         values = [bandwidth.get(t, 0) for t in times]
 
-        n_values = savgol_filter(values, 17, 7)
+        if len(values) < 7:
+            continue  # Пропускаем если данных слишком мало для сглаживания
+
+        # Dynamic window size (не больше длины массива и нечетное)
+        window = min(len(values) // 2 * 2 + 1, 17)
+        smoothed = savgol_filter(values, window, min(7, window - 1))
 
         avg = statistics.mean(values) if values else 0
         label = name
 
-        line = ax.plot(times, n_values, label=f"{label} (Avg. {int(avg // 1_000_000):,} Мбит/с)", linewidth=2)[0]
+        line = ax.plot(times, smoothed, label=f"{label} (Avg. {int(avg // 1_000_000):,} Мбит/с)", linewidth=2)[0]
+        m_val = max(m_val, max(smoothed))
         color = line.get_color()
 
-        # ax.fill_between(times, values, color=color, alpha=0.1)
         ax.axhline(avg, linestyle='--', linewidth=1.5, color=color, alpha=0.8)
 
         y_pos = find_non_overlapping_y(avg)
         ax.text(
-            label_anchor, y_pos + label_padding,
+            start_time + 5 + label_anchor, y_pos + 5,
             label,
             ha='left', va='bottom',
             fontsize=9, color='white',
@@ -110,8 +115,8 @@ def plot_multiple_bandwidth_series(file_list, interval='second', duration_limit=
     ax.set_ylabel("Throughput", fontsize=12)
     ax.grid(True, linestyle='--', alpha=0.5)
 
-    ax.set_xlim(0, duration_limit)
-    ax.set_ylim(0)
+    ax.set_xlim(start_time, end_time)
+    ax.set_ylim(0, 1.2 * m_val)
 
     ax.xaxis.set_major_formatter(ticker.FuncFormatter(seconds_to_time))
     ax.yaxis.set_major_formatter(ticker.FuncFormatter(compact_bytes))
@@ -121,7 +126,7 @@ def plot_multiple_bandwidth_series(file_list, interval='second', duration_limit=
     plt.show()
 
 if __name__ == "__main__":
-    switch = "s9"
+    switch = "s8"
     files = {
         f"./simulator_data/load-aware-{switch}-eth1_tcp_stats.csv": "BMcW",
         f"./simulator_data/ospf-{switch}-eth1_tcp_stats.csv": "OSPF",

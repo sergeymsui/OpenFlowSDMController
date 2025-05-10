@@ -89,7 +89,6 @@ class Controller(OSKenApp):
         # self.reroute(datapath)
 
         if flowstate:
-            # self.update_routes()
             self.schedule_update_routes()
 
     def schedule_update_routes(self):
@@ -133,11 +132,11 @@ class Controller(OSKenApp):
         for src, dst, _ in match_flows:
             targets_list.append((src, dst))
 
-        # flows = generate_ilp_flows(self.topo, targets_list)
+        flows = generate_ilp_flows(self.topo, targets_list)
         # flows = generate_greedy_flows(self.topo, targets_list)
         # flows = generate_msa_flows(self.topo, targets_list)
         # flows = generate_fwa_flows(self.topo, targets_list)
-        flows = generate_ustm_flows(self.topo, targets_list)
+        # flows = generate_ustm_flows(self.topo, targets_list)
 
         # Для каждого потока берем idx и его маршрут
         for idx, path in flows.items():
