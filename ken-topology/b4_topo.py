@@ -7,6 +7,7 @@ from mininet.link import TCLink
 from mininet.cli import CLI
 from mininet.log import setLogLevel
 
+from time import sleep
 
 class B4GeoTopology(Topo):
     def build(self):
@@ -56,5 +57,39 @@ if __name__ == "__main__":
     topo = B4GeoTopology()
     net = Mininet(topo=topo, switch=OVSSwitch, controller=controller, link=TCLink)
     net.start()
+    
+    sleep(5)
+
+    demands = [
+        ("h1", "h10", 100),
+        ("h2", "h9", 100),
+        ("h3", "h11", 100),
+        ("h4", "h12", 100),
+        ("h5", "h7", 100),
+        ("h6", "h8", 100),
+        ("h7", "h2", 100),
+        ("h8", "h4", 100),
+        ("h9", "h5", 100),
+        ("h10", "h1", 100),
+    ]
+
+    for _, dst, _ in demands:
+        dst_host = net.get(dst)
+        dst_host.cmd(f"iperf -s -u -i 1 > /tmp/iperf_server_{dst}.log &")
+
+    i = 20
+    while i > 0:
+        print(f"i: {i}")
+        sleep(1)
+        i -= 1
+        
+
+    for src, dst, bw in demands:
+        src_host = net.get(src)
+        dst_host = net.get(dst)
+        dst_ip = dst_host.IP()
+        cmd = f"iperf -u -c {dst_ip} -b {bw}M -t 500 -i 1 > /tmp/iperf_client_{src}_to_{dst}.log &"
+        src_host.cmd(cmd)
+
     CLI(net)
     net.stop()
