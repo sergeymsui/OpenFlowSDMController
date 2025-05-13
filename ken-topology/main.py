@@ -16,22 +16,28 @@ from os_ken.lib.dpid import dpid_to_str
 from os_ken.lib import hub
 from os_ken.lib.packet import packet, ethernet, lldp
 
-from utils import generate_ilp_flows, generate_greedy_flows, generate_msa_flows, generate_fwa_flows, generate_ustm_flows
+# from utils import (
+    # generate_ilp_flows,
+    # generate_greedy_flows,
+    # generate_msa_flows,
+    # generate_fwa_flows,
+    # generate_ustm_flows,
+# )
+
+from ilp_flows import generate_ilp_flows
 
 # Flow state
 flowstate = True
+topo_name = "b4_topograph.pickle"
 
 
 class Controller(OSKenApp):
-
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
         super(Controller, self).__init__(*args, **kwargs)
 
-        self.topo = (
-            pickle.load(open("topograph.pickle", "rb")) if flowstate else nx.DiGraph()
-        )
+        self.topo = pickle.load(open(topo_name, "rb")) if flowstate else nx.DiGraph()
         self.datapaths = dict()
         self.routing_tables = defaultdict(set)
 
@@ -40,6 +46,21 @@ class Controller(OSKenApp):
             "00:00:00:00:00:02": "h2",
             "00:00:00:00:00:03": "h3",
             "00:00:00:00:00:04": "h4",
+            "00:00:00:00:00:05": "h5",
+            "00:00:00:00:00:06": "h6",
+            "00:00:00:00:00:07": "h7",
+            "00:00:00:00:00:08": "h8",
+            "00:00:00:00:00:09": "h9",
+            "00:00:00:00:00:0a": "h10",
+            "00:00:00:00:00:0b": "h11",
+            "00:00:00:00:00:0c": "h12",
+            "00:00:00:00:00:0d": "h13",
+            "00:00:00:00:00:0e": "h14",
+            "00:00:00:00:00:0f": "h15",
+            "00:00:00:00:00:10": "h16",
+            "00:00:00:00:00:11": "h17",
+            "00:00:00:00:00:12": "h18",
+            "00:00:00:00:00:13": "h19",
         }
 
         def show():
@@ -100,39 +121,21 @@ class Controller(OSKenApp):
 
     def update_routes(self):
         match_flows = [
-            ("h1", "h3", 9080),
-            ("h1", "h3", 9081),
-            ("h1", "h3", 9082),
-            ("h1", "h3", 9083),
-            ("h1", "h3", 9084),
-            ("h1", "h3", 9085),
-            ("h1", "h3", 9086),
-            ("h1", "h3", 9087),
-            ("h1", "h3", 9088),
-            ("h1", "h3", 9098),
-            #
-            ("h2", "h4", 9080),
-            ("h2", "h4", 9081),
-            ("h2", "h4", 9082),
-            ("h2", "h4", 9083),
-            ("h2", "h4", 9084),
-            ("h2", "h4", 9085),
-            ("h2", "h4", 9086),
-            ("h2", "h4", 9087),
-            ("h2", "h4", 9088),
-            ("h2", "h4", 9098),
-            # Loopback
-            ("h3", "h1", None),
-            ("h4", "h2", None),
+            ("h1", "h10", 100),
+            ("h2", "h9", 100),
+            ("h3", "h11", 100),
+            ("h4", "h12", 100),
+            ("h5", "h7", 100),
+            ("h6", "h8", 100),
+            ("h7", "h2", 100),
+            ("h8", "h4", 100),
+            ("h9", "h5", 100),
+            ("h10", "h1", 100),
         ]
 
-        # loopback_set = set()
-        targets_list = list()
+        demands = [(s, d) for (s, d, _) in match_flows] + [(d, s) for (s, d, _) in match_flows]
 
-        for src, dst, _ in match_flows:
-            targets_list.append((src, dst))
-
-        flows = generate_ilp_flows(self.topo, targets_list)
+        flows = generate_ilp_flows(self.topo, demands)
         # flows = generate_greedy_flows(self.topo, targets_list)
         # flows = generate_msa_flows(self.topo, targets_list)
         # flows = generate_fwa_flows(self.topo, targets_list)
@@ -140,7 +143,8 @@ class Controller(OSKenApp):
 
         # Для каждого потока берем idx и его маршрут
         for idx, path in flows.items():
-            _, _, tcp_port = match_flows[idx]
+            # _, _, tcp_port = match_flows[idx]
+            tcp_port = None
 
             print(f"[MSG] idx: {idx} path: {path}")
 
@@ -302,7 +306,7 @@ class Controller(OSKenApp):
                 )
 
                 if not flowstate:
-                    pickle.dump(self.topo, open("topograph.pickle", "wb"))
+                    pickle.dump(self.topo, open(topo_name, "wb"))
 
             ip_pkt = pkt.get_protocol(ipv4.ipv4)
             if eth.ethertype in (0x0800, 0x0806):  # IPv4 или ARP

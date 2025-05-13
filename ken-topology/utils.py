@@ -1,173 +1,6 @@
-import pulp
-from collections import defaultdict
 import networkx as nx
+from collections import defaultdict
 from sdm.data_handler_config import DataHandlerConfig
-
-
-def generate_ilp_flows(topo, targets_list):
-    """
-    Генерирует потоки трафика с использованием ILP для назначения маршрутов
-    """
-
-    flows = list()
-    for _, [src, dst] in enumerate(targets_list):
-        flows.append((src, dst))
-
-    all_flows = dict()
-
-    # Шаг 1: Поиск всех кратчайших маршрутов для каждого потока
-    flow_paths = {}
-    for idx, (s, t) in enumerate(flows):
-        try:
-            paths = list(
-                nx.all_shortest_paths(topo, source=s, target=t, weight="weight")
-            )
-            flow_paths[idx] = paths
-        except nx.NetworkXNoPath:
-            print(f"Нет маршрута между {s} и {t}. Поток {idx} будет пропущен.")
-            continue
-
-    # Шаг 2: Создание ILP модели
-    model = pulp.LpProblem("Flow_Distribution_ILP", pulp.LpMinimize)
-
-    # Шаг 3: Создание переменных
-    x = {}
-    for i in flow_paths:
-        for j, path in enumerate(flow_paths[i]):
-            var_name = f"x_{i}_{j}"
-            x[(i, j)] = pulp.LpVariable(var_name, cat="Binary")
-
-    # Переменная для максимальной загрузки
-    L = pulp.LpVariable("L", lowBound=0, cat="Integer")
-
-    # Целевая функция: минимизировать L
-    model += L, "Minimize_max_load"
-
-    # Ограничение: Каждый поток назначен на ровно один путь
-    for i in flow_paths:
-        model += (
-            pulp.lpSum([x[(i, j)] for j in range(len(flow_paths[i]))]) == 1,
-            f"Flow_{i}_assignment",
-        )
-
-    # Ограничение: Загрузка каждого канала не превышает L
-    edge_loads = defaultdict(list)
-    for i in flow_paths:
-        for j, path in enumerate(flow_paths[i]):
-            for k in range(len(path) - 1):
-                e = tuple(sorted([path[k], path[k + 1]]))
-                edge_loads[e].append(x[(i, j)])
-
-    for e in edge_loads:
-        model += pulp.lpSum(edge_loads[e]) <= L, f"Edge_{e}_load"
-
-    # Шаг 4: Решение модели
-    solver = pulp.PULP_CBC_CMD(msg=True)
-    model.solve(solver)
-
-    # Проверка статуса решения
-    if pulp.LpStatus[model.status] != "Optimal":
-        raise ValueError("ILP модель не нашла оптимального решения.")
-
-    edge_load = defaultdict(int)
-    path_set = set()
-
-    # Шаг 5: Назначение маршрутов потокам
-    for i in flow_paths:
-        for j, path in enumerate(flow_paths[i]):
-            if pulp.value(x[(i, j)]) == 1:
-                # Создание объекта потока с назначенным маршрутом
-                all_flows[i] = path
-
-                path_set.add(tuple(path))
-
-                for edge in list(zip(path, path[1:])):
-                    edge_load[tuple(edge)] += 1
-
-                break  # Переходим к следующему потоку
-
-    for path in path_set:
-        max_load = max([edge_load[edge] for edge in list(zip(path, path[1:]))])
-        print(f"Max load: {max_load} for path {path}")
-
-    return all_flows
-
-
-def generate_greedy_flows(topo, targets_list):
-
-    flows = list()
-    for _, [src, dst] in enumerate(targets_list):
-        flows.append((src, dst))
-
-    # Функция для нахождения всех кратчайших путей
-    def find_all_shortest_paths(topo, source, target):
-        return list(nx.all_shortest_paths(topo, source=source, target=target))
-
-    # Построение множества всех кратчайших путей для каждого потока
-    flow_paths = []
-    for idx, (s, t) in enumerate(flows):
-        paths = find_all_shortest_paths(topo, s, t)
-        flow_paths.append({"flow_id": idx, "source": s, "target": t, "paths": paths})
-
-    flow_paths.sort(key=lambda x: len(x["paths"]))
-
-    R = nx.DiGraph()
-
-    for [u, v] in topo.edges():
-        R.add_edge(u, v, edge_load=0)
-        R.add_edge(v, u, edge_load=0)
-
-    # Функция для выбора лучшего пути для потока
-    def select_best_path(flow, graph):
-        min_max_load = float("inf")
-        best_path = None
-        for path in flow["paths"]:
-            # Найти максимальную загрузку на пути
-            current_max = max(
-                [graph[u][v]["edge_load"] for [u, v] in list(zip(path, path[1:]))]
-            )
-            if current_max < min_max_load:
-                min_max_load = current_max
-                best_path = path
-        return best_path
-
-    print("Step 4")
-
-    # Назначение потоков
-    assignment = {}
-    for flow in flow_paths:
-        best_path = select_best_path(flow, R)
-        assignment[flow["flow_id"]] = best_path
-        # Обновление загрузки каналов
-        for [u, v] in list(zip(best_path, best_path[1:])):
-            R[u][v]["edge_load"] += 1
-
-    print("Step 5")
-
-    # Определение максимальной загрузки
-    max_load = max([R[u][v]["edge_load"] for [u, v] in R.edges()])
-
-    # Вывод результатов
-    print(f"Минимальное максимальное количество потоков на канале: {max_load}\n")
-
-    all_flows = dict()
-
-    for flow_id, path in assignment.items():
-        src, dst = flows[flow_id]
-        all_flows[flow_id] = path
-        print(f"Поток {flow_id} назначен на путь: {' -> '.join(map(str, path))}")
-
-    # Дополнительно: Вывод загрузки каналов
-    print("\nЗагрузка каналов:")
-
-    for [u, v] in R.edges():
-        edge_load = R[u][v]["edge_load"]
-        print(f"Канал {u}-{v}: {edge_load} поток(ов)")
-
-    return all_flows
-
-
-# =======================================================================================
 
 
 def msa_lambda(i):
@@ -184,7 +17,7 @@ def msa(config):
 
     OLD_AEC = None
 
-    edges = []
+    edges = list()
 
     for [u, v] in config.getLinks():
         edges.append((u, v))
@@ -207,7 +40,6 @@ def msa(config):
             x_s[u][v]["weight"] += w
 
             x[u][v]["time"] = msa_t(x[u][v]["weight"])
-
             j += 1
 
     i = 1
