@@ -11,7 +11,7 @@ def generate_ilp_flows(topo, targets_list):
     print("GENERATE ILP FLOWS")
 
     flows = list()
-    for _, [src, dst] in enumerate(targets_list):
+    for _, (src, dst, _) in enumerate(targets_list):
         flows.append((src, dst))
 
     all_flows = dict()

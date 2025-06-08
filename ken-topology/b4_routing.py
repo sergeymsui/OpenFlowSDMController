@@ -22,8 +22,16 @@ from os_ken.lib.packet import packet, ethernet, lldp
 flowstate = True
 topo_name = "b4_topograph.pickle"
 
-def generate_dijkstra_flows(topo, targets_list):
-    return {}
+
+from utils import (
+    generate_msa_flows,
+    generate_fwa_flows,
+    generate_ustm_flows,
+)
+
+from ilp_flows import generate_ilp_flows
+from greedy_flows import generate_greedy_flows
+
 
 def generate_b4_flows_paths_pulp(G: nx.DiGraph, demands: list):
     """
@@ -31,7 +39,7 @@ def generate_b4_flows_paths_pulp(G: nx.DiGraph, demands: list):
     Возвращает для каждой пары (индекс в demands) один маршрут (сплавленные рёбра с положительным потоком).
     """
     edges = list(G.edges())
-    edge_caps = {(u, v): G[u][v].get('capacity', 1e9) for u, v in edges}
+    edge_caps = {(u, v): G[u][v].get("capacity", 1e9) for u, v in edges}
 
     K = list(range(len(demands)))
     sources = [d[0] for d in demands]
@@ -40,8 +48,7 @@ def generate_b4_flows_paths_pulp(G: nx.DiGraph, demands: list):
 
     # Переменные: потоки по рёбрам
     flow = {
-        (k, u, v): LpVariable(f"f_{k}_{u}_{v}", lowBound=0)
-        for k in K for u, v in edges
+        (k, u, v): LpVariable(f"f_{k}_{u}_{v}", lowBound=0) for k in K for u, v in edges
     }
 
     alpha = LpVariable("alpha", lowBound=0)
@@ -59,26 +66,35 @@ def generate_b4_flows_paths_pulp(G: nx.DiGraph, demands: list):
             inflow = lpSum(flow[k, u, node] for u in G.predecessors(node))
             outflow = lpSum(flow[k, node, v] for v in G.successors(node))
             if node == sources[k]:
-                prob += (outflow - inflow == volumes[k])
+                prob += outflow - inflow == volumes[k]
             elif node == sinks[k]:
-                prob += (inflow - outflow == volumes[k])
+                prob += inflow - outflow == volumes[k]
             else:
-                prob += (inflow == outflow)
+                prob += inflow == outflow
 
     prob.solve()
 
-    if LpStatus[prob.status] != 'Optimal':
+    if LpStatus[prob.status] != "Optimal":
         raise RuntimeError("Оптимальное решение не найдено.")
 
     # Восстановление маршрутов: для каждого потока пройти по активным рёбрам
     routes = {}
     for k in K:
-        used_edges = [(u, v) for u, v in edges if flow[k, u, v].varValue and flow[k, u, v].varValue > 1e-6]
+        used_edges = [
+            (u, v)
+            for u, v in edges
+            if flow[k, u, v].varValue and flow[k, u, v].varValue > 1e-6
+        ]
         # Построим подграф потока и найдём путь из источника в приёмник
         flow_graph = nx.DiGraph()
         flow_graph.add_edges_from(used_edges)
         try:
-            routes[k] = [its for its in nx.shortest_path(flow_graph, source=sources[k], target=sinks[k])]
+            routes[k] = [
+                its
+                for its in nx.shortest_path(
+                    flow_graph, source=sources[k], target=sinks[k]
+                )
+            ]
         except nx.NetworkXNoPath:
             routes[k] = []
     return routes
@@ -91,9 +107,7 @@ class Controller(OSKenApp):
     def __init__(self, *args, **kwargs):
         super(Controller, self).__init__(*args, **kwargs)
 
-        self.topo = (
-            pickle.load(open(topo_name, "rb")) if flowstate else nx.DiGraph()
-        )
+        self.topo = pickle.load(open(topo_name, "rb")) if flowstate else nx.DiGraph()
         self.datapaths = dict()
         self.routing_tables = defaultdict(set)
 
@@ -193,9 +207,14 @@ class Controller(OSKenApp):
             ("h9", "h5", 100),
             ("h10", "h1", 100),
         ]
-        
+
         demands = match_flows + [(d, s, v) for (s, d, v) in match_flows]
-        flows = generate_b4_flows_paths_pulp(self.topo, demands)
+
+        # flows = generate_b4_flows_paths_pulp(self.topo, demands)
+        # flows = generate_ilp_flows(self.topo, demands)
+        # flows = generate_greedy_flows(self.topo, demands)
+
+        flows = generate_msa_flows(self.topo, demands)
 
         # Для каждого потока берем idx и его маршрут
         for idx, path in flows.items():
@@ -461,6 +480,3 @@ class Controller(OSKenApp):
 
         datapath.send_msg(mod)
         self.logger.debug("Added flow: %s", match)
-
-
-

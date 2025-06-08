@@ -4,7 +4,7 @@ import networkx as nx
 def generate_greedy_flows(topo, targets_list):
 
     flows = list()
-    for _, [src, dst] in enumerate(targets_list):
+    for _, (src, dst, _) in enumerate(targets_list):
         flows.append((src, dst))
 
     # Функция для нахождения всех кратчайших путей
