@@ -269,7 +269,7 @@ def generate_msa_flows(
     )
 
     correspondence = list()
-    for _, [src, dst] in enumerate(targets_list):
+    for _, (src, dst, _) in enumerate(targets_list):
         correspondence.append([[src, dst], 1])
 
     config.setZonesNumber(len(correspondence))
@@ -357,8 +357,18 @@ def generate_fwa_flows(
     # for _, [src, dst] in enumerate(targets_list):
     #     correspondence.append([[src, dst], 1])
 
-    correspondence.append([["h1", "h3"], 10])
-    correspondence.append([["h2", "h4"], 10])
+    correspondence.append([["h1_1", "h6_1"], 10])
+    correspondence.append([["h1_2", "h6_2"], 10])
+    correspondence.append([["h1_3", "h6_3"], 10])
+    correspondence.append([["h1_4", "h6_4"], 10])
+    correspondence.append([["h2_1", "h5_1"], 10])
+    correspondence.append([["h2_2", "h5_2"], 10])
+    correspondence.append([["h2_3", "h5_3"], 10])
+    correspondence.append([["h2_4", "h5_4"], 10])
+    correspondence.append([["h3_1", "h4_1"], 10])
+    correspondence.append([["h3_2", "h4_2"], 10])
+    correspondence.append([["h3_3", "h4_3"], 10])
+    correspondence.append([["h3_4", "h4_4"], 10])
 
     config.setZonesNumber(len(correspondence))
     config.setCorrespondence(correspondence)
@@ -491,8 +501,18 @@ def generate_ustm_flows(
     # for _, [src, dst] in enumerate(targets_list):
     #     correspondence.append([[src, dst], nflows * corr_weight])
 
-    correspondence.append([["h1", "h3"], 10])
-    correspondence.append([["h2", "h4"], 10])
+    correspondence.append([["h1_1", "h6_1"], 10])
+    correspondence.append([["h1_2", "h6_2"], 10])
+    correspondence.append([["h1_3", "h6_3"], 10])
+    correspondence.append([["h1_4", "h6_4"], 10])
+    correspondence.append([["h2_1", "h5_1"], 10])
+    correspondence.append([["h2_2", "h5_2"], 10])
+    correspondence.append([["h2_3", "h5_3"], 10])
+    correspondence.append([["h2_4", "h5_4"], 10])
+    correspondence.append([["h3_1", "h4_1"], 10])
+    correspondence.append([["h3_2", "h4_2"], 10])
+    correspondence.append([["h3_3", "h4_3"], 10])
+    correspondence.append([["h3_4", "h4_4"], 10])
 
     config.setZonesNumber(len(correspondence))
     config.setCorrespondence(correspondence)

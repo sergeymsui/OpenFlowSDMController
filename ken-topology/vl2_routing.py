@@ -23,14 +23,17 @@ flowstate = True
 topo_name = "vl2_topograph.pickle"
 
 
-# from utils import (
-#     generate_msa_flows,
-#     generate_fwa_flows,
-#     generate_ustm_flows,
-# )
+from utils import (
+    generate_msa_flows,
+    generate_fwa_flows,
+    generate_ustm_flows,
+)
+
+from threading import Lock
 
 from ilp_flows import generate_ilp_flows
 from greedy_flows import generate_greedy_flows
+
 
 def generate_shortest_paths(G: nx.DiGraph, demands: list):
     """
@@ -58,6 +61,9 @@ class Controller(OSKenApp):
     def __init__(self, *args, **kwargs):
         super(Controller, self).__init__(*args, **kwargs)
 
+        self._update_lock = Lock()
+        self._thread_active = False
+
         # Загрузка топологии
         self.topo = pickle.load(open(topo_name, "rb")) if flowstate else nx.DiGraph()
         self.datapaths = dict()
@@ -69,20 +75,32 @@ class Controller(OSKenApp):
             "00:00:00:00:01:01": "h1_1",
             "00:00:00:00:01:02": "h1_2",
             "00:00:00:00:01:03": "h1_3",
+            "00:00:00:00:01:04": "h1_4",
             "00:00:00:00:02:01": "h2_1",
             "00:00:00:00:02:02": "h2_2",
             "00:00:00:00:02:03": "h2_3",
+            "00:00:00:00:02:04": "h2_4",
             "00:00:00:00:03:01": "h3_1",
             "00:00:00:00:03:02": "h3_2",
             "00:00:00:00:03:03": "h3_3",
+            "00:00:00:00:03:04": "h3_4",
             "00:00:00:00:04:01": "h4_1",
             "00:00:00:00:04:02": "h4_2",
             "00:00:00:00:04:03": "h4_3",
+            "00:00:00:00:04:04": "h4_4",
+            "00:00:00:00:05:01": "h5_1",
+            "00:00:00:00:05:02": "h5_2",
+            "00:00:00:00:05:03": "h5_3",
+            "00:00:00:00:05:04": "h5_4",
+            "00:00:00:00:06:01": "h6_1",
+            "00:00:00:00:06:02": "h6_2",
+            "00:00:00:00:06:03": "h6_3",
+            "00:00:00:00:06:04": "h6_4",
         }
 
         def process(target):
             print("Wait calculation process")
-            sleep(5)
+            sleep(10)
             print("Calculate...")
             target.update_routes()
 
@@ -115,7 +133,7 @@ class Controller(OSKenApp):
             self.__add_flow(datapath, 0, match, actions)
 
         # Запрос информации о портах
-        self.request_port_desc(datapath)
+        # self.request_port_desc(datapath)
 
         # Обновление маршрутов в таблице маршрутизации
         #
@@ -130,53 +148,38 @@ class Controller(OSKenApp):
 
     def schedule_update_routes(self):
         # Если уже идёт ожидание — сбрасываем его и запускаем заново
-        if self._delayed_update_thread.is_alive():
-            pass
-        else:
-            self._delayed_update_thread.start()
+        with self._update_lock:
+            if not self._thread_active:
+                self._delayed_update_thread.start()
+                self._thread_active = True
 
     def update_routes(self):
         match_flows = [
-            (src, dst, 100)
-            for src in [
-                "h1_1",
-                "h1_2",
-                "h1_3",
-                "h2_1",
-                "h2_2",
-                "h2_3",
-                "h3_1",
-                "h3_2",
-                "h3_3",
-                "h4_1",
-                "h4_2",
-                "h4_3",
-            ]
-            for dst in [
-                "h1_1",
-                "h1_2",
-                "h1_3",
-                "h2_1",
-                "h2_2",
-                "h2_3",
-                "h3_1",
-                "h3_2",
-                "h3_3",
-                "h4_1",
-                "h4_2",
-                "h4_3",
-            ]
-            if src != dst
+            ("h1_1", "h6_1", 100),
+            ("h1_2", "h6_2", 100),
+            ("h1_3", "h6_3", 100),
+            ("h1_4", "h6_4", 100),
+            ("h2_1", "h5_1", 100),
+            ("h2_2", "h5_2", 100),
+            ("h2_3", "h5_3", 100),
+            ("h2_4", "h5_4", 100),
+            ("h3_1", "h4_1", 100),
+            ("h3_2", "h4_2", 100),
+            ("h3_3", "h4_3", 100),
+            ("h3_4", "h4_4", 100),
         ]
 
         demands = match_flows + [(d, s, v) for (s, d, v) in match_flows]
 
-        flows = generate_shortest_paths(self.topo, demands)
+        # flows = generate_shortest_paths(self.topo, demands)
 
         # flows = generate_b4_flows_paths_pulp(self.topo, demands)
         # flows = generate_ilp_flows(self.topo, demands)
         # flows = generate_greedy_flows(self.topo, demands)
         # flows = generate_msa_flows(self.topo, demands)
+
+        # flows = generate_fwa_flows(self.topo, demands)
+        flows = generate_ustm_flows(self.topo, demands)
 
         # Для каждого потока берем idx и его маршрут
         for idx, path in flows.items():
@@ -483,9 +486,11 @@ class Controller(OSKenApp):
                     self.__add_flow(datapath, 10, match, actions)
 
                     # ARP
-                    match_arp = parser.OFPMatch(eth_type=0x0806, arp_tpa=dst_params["ip"])
+                    match_arp = parser.OFPMatch(
+                        eth_type=0x0806, arp_tpa=dst_params["ip"]
+                    )
                     self.__add_flow(datapath, 10, match_arp, actions)
-    
+
     def __add_flow(
         self, datapath, priority, match, actions, idle_timeout=0, hard_timeout=0
     ):
