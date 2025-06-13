@@ -10,21 +10,24 @@ from time import sleep
 
 
 class VL2Topology(Topo):
-    def build(self, num_pods=4, num_hosts_per_tor=2):
+    def build(self, num_pods=4, num_hosts_per_tor=3):
         """
-        VL2 Topology Generator
-        :param num_pods: число ToR и Aggregation коммутаторов
-        :param num_hosts_per_tor: сколько серверов подключено к одному ToR
+        VL2 Topology Generator c неймингом s1, s2, s3...
         """
 
         tor_switches = []
         agg_switches = []
         core_switches = []
 
+        switch_counter = 1
+
         # ToR (Top of Rack) switches
         for i in range(1, num_pods + 1):
-            tor = self.addSwitch(f"tor{i}")
+            tor_name = f"s{switch_counter}"
+            tor = self.addSwitch(tor_name)
             tor_switches.append(tor)
+            switch_counter += 1
+
             # Подключаем хосты к каждому ToR
             for j in range(1, num_hosts_per_tor + 1):
                 host = self.addHost(f"h{i}_{j}", mac=f"00:00:00:00:{i:02x}:{j:02x}")
@@ -32,18 +35,24 @@ class VL2Topology(Topo):
 
         # Aggregation switches
         for i in range(1, num_pods + 1):
-            agg = self.addSwitch(f"agg{i}")
+            agg_name = f"s{switch_counter}"
+            agg = self.addSwitch(agg_name)
             agg_switches.append(agg)
+            switch_counter += 1
+
             # Подключаем каждый ToR к Aggregation
             for tor in tor_switches:
-                self.addLink(tor, agg, bw=1000, delay="5ms")
+                self.addLink(tor, agg, bw=10, delay="5ms")
 
-        # Core switches (для полноты картины)
+        # Core switches
         for i in range(1, num_pods):
-            core = self.addSwitch(f"core{i}")
+            core_name = f"s{switch_counter}"
+            core = self.addSwitch(core_name)
             core_switches.append(core)
+            switch_counter += 1
+
             for agg in agg_switches:
-                self.addLink(agg, core, bw=1000, delay="5ms")
+                self.addLink(agg, core, bw=10, delay="5ms")
 
 
 if __name__ == "__main__":

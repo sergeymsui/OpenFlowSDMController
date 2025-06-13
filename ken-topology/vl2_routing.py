@@ -32,18 +32,39 @@ topo_name = "vl2_topograph.pickle"
 from ilp_flows import generate_ilp_flows
 from greedy_flows import generate_greedy_flows
 
+def generate_shortest_paths(G: nx.DiGraph, demands: list):
+    """
+    Расчёт маршрутов через кратчайшие пути (Дейкстра).
+    Возвращает для каждой пары (индекс в demands) один маршрут.
+    """
+    routes = {}
+
+    for k, (src, dst, volume) in enumerate(demands):
+        try:
+            path = nx.shortest_path(G, source=src, target=dst)
+            routes[k] = path
+        except nx.NetworkXNoPath:
+            routes[k] = []
+            print(f"[WARN] Нет пути между {src} и {dst}")
+
+    return routes
+
 
 class Controller(OSKenApp):
 
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
+    # Инициализация
     def __init__(self, *args, **kwargs):
         super(Controller, self).__init__(*args, **kwargs)
 
+        # Загрузка топологии
         self.topo = pickle.load(open(topo_name, "rb")) if flowstate else nx.DiGraph()
         self.datapaths = dict()
+        # Таблица маршрутизации
         self.routing_tables = defaultdict(set)
 
+        # Хосты с MAC-адресами
         self.hosts = {
             "00:00:00:00:01:01": "h1_1",
             "00:00:00:00:01:02": "h1_2",
@@ -66,7 +87,6 @@ class Controller(OSKenApp):
             target.update_routes()
 
         self._delayed_update_thread = Thread(target=process, args=(self,))
-
         hub.spawn(self._lldp_loop)
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
@@ -101,7 +121,7 @@ class Controller(OSKenApp):
         #
         # Данный алгоритм использует выбор кратчайшего маршрута
         # через применение алгоритма Дейкстры для каждого хоста
-        self.reroute(datapath)
+        # self.reroute(datapath)
 
         # В случае если применяется отложенный выбор маршрута
         # то обновление пути осуществляется через таблицу match_flows
@@ -151,10 +171,11 @@ class Controller(OSKenApp):
 
         demands = match_flows + [(d, s, v) for (s, d, v) in match_flows]
 
-        # flows = generate_b4_flows_paths_pulp(self.topo, demands)
-        flows = generate_ilp_flows(self.topo, demands)
-        # flows = generate_greedy_flows(self.topo, demands)
+        flows = generate_shortest_paths(self.topo, demands)
 
+        # flows = generate_b4_flows_paths_pulp(self.topo, demands)
+        # flows = generate_ilp_flows(self.topo, demands)
+        # flows = generate_greedy_flows(self.topo, demands)
         # flows = generate_msa_flows(self.topo, demands)
 
         # Для каждого потока берем idx и его маршрут
@@ -349,9 +370,9 @@ class Controller(OSKenApp):
                 ]
                 self.__add_flow(datapath, 10, match, actions)
 
-                print(
-                    f"[SET] dpid: {dpid} ip: {ip} mac: {mac} out_port: {out_port} tcp_port: {tcp_port}"
-                )
+                # print(
+                #     f"[SET] dpid: {dpid} ip: {ip} mac: {mac} out_port: {out_port} tcp_port: {tcp_port}"
+                # )
 
                 # Правило для ARP-запросов
                 match = parser.OFPMatch(eth_type=0x0806, arp_tpa=ip)
@@ -403,6 +424,68 @@ class Controller(OSKenApp):
                         (host_params["ip"], host_params["mac"], ports["dst_port"], None)
                     )
 
+    # УДАЛИТЬ
+    def install_full_paths(self):
+        """
+        Устанавливаем полные маршруты для каждой пары хостов.
+        """
+        hosts = [
+            (name, params)
+            for name, params in self.topo.nodes(data=True)
+            if params.get("type") == "host"
+        ]
+
+        for src_name, src_params in hosts:
+            for dst_name, dst_params in hosts:
+                if src_name == dst_name:
+                    continue
+
+                try:
+                    path = nx.shortest_path(self.topo, src_name, dst_name)
+                except nx.NetworkXNoPath:
+                    print(f"[WARN] Нет пути между {src_name} и {dst_name}")
+                    continue
+
+                print(f"[PATH] {src_name} -> {dst_name} via {path}")
+
+                # Проходим по всем парам свитчей вдоль пути
+                for i in range(1, len(path) - 1):
+                    current_node = path[i]
+                    next_node = path[i + 1]
+
+                    # Проверяем, что это свитч
+                    current_params = self.topo.nodes[current_node]
+                    if current_params.get("type") != "switch":
+                        continue
+
+                    # Получаем dpid свитча
+                    dpid = current_params["dpid"]
+
+                    # Получаем datapath
+                    datapath = self.datapaths.get(dpid)
+                    if datapath is None:
+                        continue
+
+                    parser = datapath.ofproto_parser
+
+                    # Находим порт выхода на следующий свитч/хост
+                    edge_data = self.topo.get_edge_data(current_node, next_node)
+                    if edge_data is None:
+                        continue
+
+                    out_port = edge_data.get("src_port")
+
+                    match = parser.OFPMatch(eth_type=0x0800, ipv4_dst=dst_params["ip"])
+                    actions = [
+                        parser.OFPActionSetField(eth_dst=dst_params["mac"]),
+                        parser.OFPActionOutput(out_port),
+                    ]
+                    self.__add_flow(datapath, 10, match, actions)
+
+                    # ARP
+                    match_arp = parser.OFPMatch(eth_type=0x0806, arp_tpa=dst_params["ip"])
+                    self.__add_flow(datapath, 10, match_arp, actions)
+    
     def __add_flow(
         self, datapath, priority, match, actions, idle_timeout=0, hard_timeout=0
     ):
