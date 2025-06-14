@@ -42,7 +42,7 @@ class VL2Topology(Topo):
 
             # Подключаем каждый ToR к Aggregation
             for tor in tor_switches:
-                self.addLink(tor, agg, bw=10, delay="5ms")
+                self.addLink(tor, agg, bw=50, delay="1ms")
 
         # Core switches
         for i in range(1, num_pods):
@@ -52,7 +52,7 @@ class VL2Topology(Topo):
             switch_counter += 1
 
             for agg in agg_switches:
-                self.addLink(agg, core, bw=10, delay="5ms")
+                self.addLink(agg, core, bw=50, delay="1ms")
 
 
 if __name__ == "__main__":
@@ -84,7 +84,7 @@ if __name__ == "__main__":
         dst_host = net.get(dst)
         dst_host.cmd(f"iperf -s -i 1 > /tmp/iperf_server_{dst}.log &")
 
-    i = 20
+    i = 10
     while i > 0:
         print(f"i: {i}")
         sleep(1)
