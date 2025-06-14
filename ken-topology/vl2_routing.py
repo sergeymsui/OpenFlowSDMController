@@ -62,17 +62,28 @@ def generate_ospf_like_paths(G: nx.DiGraph, demands: list):
     return routes
 
 
-def generate_shortest_paths(G: nx.DiGraph, demands: list):
+def generate_adaptive_shortest_paths(G: nx.DiGraph, demands: list, weight_attr='weight', increment=1):
     """
-    Расчёт маршрутов через кратчайшие пути (Дейкстра).
-    Возвращает для каждой пары (индекс в demands) один маршрут.
+    Расчёт маршрутов через кратчайшие пути (Дейкстра) с динамическим увеличением веса рёбер.
+    После выбора каждого маршрута веса рёбер на его пути увеличиваются.
     """
+    # Если в графе ещё нет весов — инициализируем все веса равными 1
+    for u, v in G.edges():
+        if weight_attr not in G[u][v]:
+            G[u][v][weight_attr] = 1
+
     routes = {}
 
     for k, (src, dst, volume) in enumerate(demands):
         try:
-            path = nx.shortest_path(G, source=src, target=dst)
+            path = nx.shortest_path(G, source=src, target=dst, weight=weight_attr)
             routes[k] = path
+
+            # Увеличиваем веса на рёбрах пути
+            for i in range(len(path)-1):
+                u, v = path[i], path[i+1]
+                G[u][v][weight_attr] += increment
+
         except nx.NetworkXNoPath:
             routes[k] = []
             print(f"[WARN] Нет пути между {src} и {dst}")
