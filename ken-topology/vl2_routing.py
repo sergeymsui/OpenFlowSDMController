@@ -35,6 +35,33 @@ from ilp_flows import generate_ilp_flows
 from greedy_flows import generate_greedy_flows
 
 
+def generate_ospf_like_paths(G: nx.DiGraph, demands: list):
+    """
+    Расчёт маршрутов аналогично работе OSPF.
+
+    Для каждого demand (src, dst, volume) считаем кратчайший путь
+    по стоимости веса на рёбрах, который имитирует OSPF cost.
+
+    Если веса не заданы — считаем cost=1, что эквивалентно обычному OSPF в простейшей сети.
+
+    :param G: Сетевая топология (Graph)
+    :param demands: Список demand (src, dst, volume)
+    :return: Словарь маршрутов {индекс: путь}
+    """
+    routes = {}
+
+    for k, (src, dst, volume) in enumerate(demands):
+        try:
+            # OSPF строит маршруты по сумме cost (если веса не заданы — просто hop count)
+            path = nx.shortest_path(G, source=src, target=dst, weight="cost")
+            routes[k] = path
+        except nx.NetworkXNoPath:
+            routes[k] = []
+            print(f"[OSPF_WARN] Нет пути между {src} и {dst}")
+
+    return routes
+
+
 def generate_shortest_paths(G: nx.DiGraph, demands: list):
     """
     Расчёт маршрутов через кратчайшие пути (Дейкстра).
@@ -169,6 +196,21 @@ class Controller(OSKenApp):
             ("h3_4", "h4_4", 100),
         ]
 
+        # Таблица потоков (корреспонденций)
+        match_flows = []
+
+        pods = 6
+        hosts_per_pod = 4
+
+        for i in range(1, pods + 1):
+            for j in range(1, hosts_per_pod + 1):
+                src = f"h{i}_{j}"
+                for ii in range(1, pods + 1):
+                    for jj in range(1, hosts_per_pod + 1):
+                        dst = f"h{ii}_{jj}"
+                        if src != dst:
+                            match_flows.append((src, dst, 100))
+
         demands = match_flows + [(d, s, v) for (s, d, v) in match_flows]
 
         # flows = generate_shortest_paths(self.topo, demands)
@@ -179,7 +221,8 @@ class Controller(OSKenApp):
         # flows = generate_msa_flows(self.topo, demands)
 
         # flows = generate_fwa_flows(self.topo, demands)
-        flows = generate_ustm_flows(self.topo, demands)
+        # flows = generate_ustm_flows(self.topo, demands)
+        flows = generate_ospf_like_paths(self.topo, demands)
 
         # Для каждого потока берем idx и его маршрут
         for idx, path in flows.items():

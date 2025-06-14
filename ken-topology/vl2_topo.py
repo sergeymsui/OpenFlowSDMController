@@ -80,22 +80,22 @@ if __name__ == "__main__":
         ("h3_4", "h4_4", 100),
     ]
 
-    for _, dst, _ in demands:
-        dst_host = net.get(dst)
-        dst_host.cmd(f"iperf -s -i 1 > /tmp/iperf_server_{dst}.log &")
+    # for _, dst, _ in demands:
+    #     dst_host = net.get(dst)
+    #     dst_host.cmd(f"iperf -s -i 1 > /tmp/iperf_server_{dst}.log &")
 
-    i = 20
-    while i > 0:
-        print(f"i: {i}")
-        sleep(1)
-        i -= 1
+    # i = 20
+    # while i > 0:
+    #     print(f"i: {i}")
+    #     sleep(1)
+    #     i -= 1
 
-    for src, dst, bw in demands:
-        src_host = net.get(src)
-        dst_host = net.get(dst)
-        dst_ip = dst_host.IP()
-        cmd = f"iperf -c {dst_ip} -b {bw}M -t 500 -i 1 > /tmp/iperf_client_{src}_to_{dst}.log &"
-        src_host.cmd(cmd)
+    # for src, dst, bw in demands:
+    #     src_host = net.get(src)
+    #     dst_host = net.get(dst)
+    #     dst_ip = dst_host.IP()
+    #     cmd = f"iperf -c {dst_ip} -b {bw}M -t 500 -i 1 > /tmp/iperf_client_{src}_to_{dst}.log &"
+    #     src_host.cmd(cmd)
 
     sleep(3)
     print("Topology started. You can now attach your controller.")
