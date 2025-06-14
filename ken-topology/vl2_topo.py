@@ -42,7 +42,7 @@ class VL2Topology(Topo):
 
             # Подключаем каждый ToR к Aggregation
             for tor in tor_switches:
-                self.addLink(tor, agg, bw=100, delay="5ms")
+                self.addLink(tor, agg, bw=10, delay="5ms")
 
         # Core switches
         for i in range(1, num_pods):
@@ -52,7 +52,7 @@ class VL2Topology(Topo):
             switch_counter += 1
 
             for agg in agg_switches:
-                self.addLink(agg, core, bw=100, delay="5ms")
+                self.addLink(agg, core, bw=10, delay="5ms")
 
 
 if __name__ == "__main__":
@@ -66,18 +66,18 @@ if __name__ == "__main__":
     sleep(5)
 
     demands = [
-        ("h1_1", "h6_1", 100),
-        ("h1_2", "h6_2", 100),
-        ("h1_3", "h6_3", 100),
-        ("h1_4", "h6_4", 100),
-        ("h2_1", "h5_1", 100),
-        ("h2_2", "h5_2", 100),
-        ("h2_3", "h5_3", 100),
-        ("h2_4", "h5_4", 100),
-        ("h3_1", "h4_1", 100),
-        ("h3_2", "h4_2", 100),
-        ("h3_3", "h4_3", 100),
-        ("h3_4", "h4_4", 100),
+        ("h1_1", "h6_1", 10),
+        ("h1_2", "h6_2", 10),
+        ("h1_3", "h6_3", 10),
+        ("h1_4", "h6_4", 10),
+        ("h2_1", "h5_1", 10),
+        ("h2_2", "h5_2", 10),
+        ("h2_3", "h5_3", 10),
+        ("h2_4", "h5_4", 10),
+        ("h3_1", "h4_1", 10),
+        ("h3_2", "h4_2", 10),
+        ("h3_3", "h4_3", 10),
+        ("h3_4", "h4_4", 10),
     ]
 
     for _, dst, _ in demands:
