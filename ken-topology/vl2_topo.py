@@ -94,7 +94,7 @@ if __name__ == "__main__":
         src_host = net.get(src)
         dst_host = net.get(dst)
         dst_ip = dst_host.IP()
-        cmd = f"iperf -c {dst_ip} -b {bw}M -t 500 -i 1 > /tmp/iperf_client_{src}_to_{dst}.log &"
+        cmd = f"iperf -c {dst_ip} -b {bw}M -t 1500 -i 1 > /tmp/iperf_client_{src}_to_{dst}.log &"
         src_host.cmd(cmd)
 
     sleep(3)
