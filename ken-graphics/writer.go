@@ -14,8 +14,8 @@ import (
 )
 
 func main() {
-	inputFile := "D:/ustm-s8-eth1.pcap"
-	outputFile := "./ustm-s8-eth1_tcp_stats.csv"
+	inputFile := "/home/vda/Test/fwa/s12-eth6.pcap"
+	outputFile := "/home/vda/Test/fwa/s12-eth6.csv"
 
 	// Открытие pcapng файла
 	handle, err := os.Open(inputFile)
@@ -64,8 +64,8 @@ func main() {
 					strconv.Itoa(length),
 				})
 
-                fmt.Printf("n: %d, SrcPort: %d, DstPort: %d, length: %d\n", n, tcp.SrcPort, tcp.DstPort, length)
-                n++
+				fmt.Printf("n: %d, SrcPort: %d, DstPort: %d, length: %d\n", n, tcp.SrcPort, tcp.DstPort, length)
+				n++
 			}
 		}
 	}
