@@ -93,7 +93,7 @@ func processPcap(inputFile string) {
 		if tcpLayer := packet.Layer(layers.LayerTypeTCP); tcpLayer != nil {
 			tcp, _ := tcpLayer.(*layers.TCP)
 
-			if inPortRange(tcp.SrcPort, 9080, 9090) || inPortRange(tcp.DstPort, 9080, 9090) {
+			if inPortRange(tcp.SrcPort, 0, 65535) || inPortRange(tcp.DstPort, 0, 65535) {
 				ts := packet.Metadata().Timestamp
 				timestampStr := ts.Format(time.RFC3339Nano)
 				unixNs := ts.UnixNano()
