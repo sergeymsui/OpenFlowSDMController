@@ -42,7 +42,7 @@ class VL2Topology(Topo):
 
             # Подключаем каждый ToR к Aggregation
             for tor in tor_switches:
-                self.addLink(tor, agg, bw=50, delay="1ms")
+                self.addLink(tor, agg)
 
         # Core switches
         for i in range(1, num_pods):
@@ -52,7 +52,7 @@ class VL2Topology(Topo):
             switch_counter += 1
 
             for agg in agg_switches:
-                self.addLink(agg, core, bw=50, delay="1ms")
+                self.addLink(agg, core)
 
 
 if __name__ == "__main__":
