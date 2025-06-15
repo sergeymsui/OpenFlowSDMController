@@ -59,26 +59,23 @@ if __name__ == "__main__":
     setLogLevel("info")
     controller = RemoteController("c0", ip="127.0.0.1", port=6633)
 
+    pods = 6
+    hosts_per_pod = 4
     topo = VL2Topology(num_pods=6, num_hosts_per_tor=4)
     net = Mininet(topo=topo, switch=OVSSwitch, controller=controller, link=TCLink)
     net.start()
 
     sleep(5)
 
-    demands = [
-        ("h1_1", "h6_1", 100),
-        ("h1_2", "h6_2", 100),
-        ("h1_3", "h6_3", 100),
-        ("h1_4", "h6_4", 100),
-        ("h2_1", "h5_1", 100),
-        ("h2_2", "h5_2", 100),
-        ("h2_3", "h5_3", 100),
-        ("h2_4", "h5_4", 100),
-        ("h3_1", "h4_1", 100),
-        ("h3_2", "h4_2", 100),
-        ("h3_3", "h4_3", 100),
-        ("h3_4", "h4_4", 100),
-    ]
+    demands = list()
+    for i in range(1, pods + 1):
+        for j in range(1, hosts_per_pod + 1):
+            src = f"h{i}_{j}"
+            for ii in range(1, pods + 1):
+                for jj in range(1, hosts_per_pod + 1):
+                    dst = f"h{ii}_{jj}"
+                    if src != dst:
+                        demands.append((src, dst, 100))
 
     for _, dst, _ in demands:
         dst_host = net.get(dst)
