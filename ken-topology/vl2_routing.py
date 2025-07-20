@@ -264,7 +264,7 @@ class Controller(OSKenApp):
 
         demands = match_flows + [(d, s, v) for (s, d, v) in match_flows]
 
-        # flows = generate_shortest_paths(self.topo, demands)
+        flows = generate_adaptive_shortest_paths(self.topo, demands)
 
         # flows = generate_b4_flows_paths_pulp(self.topo, demands)
         # flows = generate_ilp_flows(self.topo, demands)
@@ -274,7 +274,7 @@ class Controller(OSKenApp):
         # flows = generate_fwa_flows(self.topo, demands)
         # flows = generate_ustm_flows(self.topo, demands)
         # flows = generate_ospf_like_paths(self.topo, demands)
-        flows = generate_load_aware_paths(self.topo, demands)
+        # flows = generate_load_aware_paths(self.topo, demands)
 
         # Для каждого потока берем idx и его маршрут
         for idx, path in flows.items():

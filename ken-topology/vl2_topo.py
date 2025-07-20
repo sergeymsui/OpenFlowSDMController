@@ -11,10 +11,6 @@ from time import sleep
 
 class VL2Topology(Topo):
     def build(self, num_pods=6, num_hosts_per_tor=4):
-        """
-        VL2 Topology Generator для 24 хостов с неймингом s1, s2, s3...
-        """
-
         tor_switches = []
         agg_switches = []
         core_switches = []

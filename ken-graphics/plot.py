@@ -138,7 +138,7 @@ def plot_multiple_bandwidth_series(
 
 
 if __name__ == "__main__":
-    switch = "s12-eth6"
+    switch = "s2-eth1"
     files = {
         f"./vl2/lwr/{switch}.csv": "BMcW",
         f"./vl2/ospf/{switch}.csv": "OSPF",
