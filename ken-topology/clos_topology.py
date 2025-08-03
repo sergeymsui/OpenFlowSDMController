@@ -36,6 +36,25 @@ from mininet.cli import CLI
 from mininet.log import setLogLevel
 from time import sleep
 
+hosts = {
+    "h0_0_0": "00:00:00:00:00:02",
+    "h0_0_1": "00:00:00:00:00:01",
+    "h0_1_0": "00:00:00:00:01:00",
+    "h0_1_1": "00:00:00:00:01:01",
+    "h1_0_0": "00:00:00:01:00:00",
+    "h1_0_1": "00:00:00:01:00:01",
+    "h1_1_0": "00:00:00:01:01:00",
+    "h1_1_1": "00:00:00:01:01:01",
+    "h2_0_0": "00:00:00:02:00:00",
+    "h2_0_1": "00:00:00:02:00:01",
+    "h2_1_0": "00:00:00:02:01:00",
+    "h2_1_1": "00:00:00:02:01:01",
+    "h3_0_0": "00:00:00:03:00:00",
+    "h3_0_1": "00:00:00:03:00:01",
+    "h3_1_0": "00:00:00:03:01:00",
+    "h3_1_1": "00:00:00:03:01:01",
+}
+
 
 class ClosTopology(Topo):
     """Простая параметризуемая Clos (fat‑tree) топология.
@@ -82,8 +101,7 @@ class ClosTopology(Topo):
                 # Подключаем хосты к edge‑коммутатору
                 for host_idx in range(hosts_per_edge):
                     host_name = f"h{pod}_{edge_idx}_{host_idx}"
-                    # Генерация MAC‑адреса: первые байты обозначают pod и номер edge/host
-                    mac = f"00:00:00:{pod:02x}:{edge_idx:02x}:{host_idx:02x}"
+                    mac = hosts[host_name]
                     host = self.addHost(host_name, mac=mac)
                     print(mac, host)
                     # Хост‑edge link

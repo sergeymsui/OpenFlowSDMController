@@ -19,7 +19,7 @@ from os_ken.lib import hub
 from os_ken.lib.packet import packet, ethernet, lldp
 
 # Flow state
-flowstate = True
+flowstate = False
 topo_name = "b4_topograph.pickle"
 
 

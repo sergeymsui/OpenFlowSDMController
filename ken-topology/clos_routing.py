@@ -19,7 +19,7 @@ from os_ken.lib import hub
 from os_ken.lib.packet import packet, ethernet, lldp
 
 # Flow state
-flowstate = False
+flowstate = True
 topo_name = "clos_topograph.pickle"
 
 
@@ -144,13 +144,15 @@ class Controller(OSKenApp):
 
         # Загрузка топологии
         self.topo = pickle.load(open(topo_name, "rb")) if flowstate else nx.DiGraph()
+
+        # self.topo = self.build_clos_topology()
         self.datapaths = dict()
         # Таблица маршрутизации
         self.routing_tables = defaultdict(set)
 
         # Хосты с MAC-адресами
         self.hosts = {
-            "00:00:00:00:00:00": "h0_0_0",
+            "00:00:00:00:00:02": "h0_0_0",
             "00:00:00:00:00:01": "h0_0_1",
             "00:00:00:00:01:00": "h0_1_0",
             "00:00:00:00:01:01": "h0_1_1",
@@ -176,6 +178,87 @@ class Controller(OSKenApp):
 
         self._delayed_update_thread = Thread(target=process, args=(self,))
         hub.spawn(self._lldp_loop)
+
+    def build_clos_topology(self, k=4, hosts_per_edge=2):
+        """
+        Генерация Clos‑топологии (fat-tree) вручную в виде nx.DiGraph.
+        """
+        G = nx.DiGraph()
+        pods = k
+        core_switches = []
+        agg_switches = []
+        edge_switches = []
+
+        host_mac_map = {
+            "h0_0_0": "00:00:00:00:00:02",
+            "h0_0_1": "00:00:00:00:00:01",
+            "h0_1_0": "00:00:00:00:01:00",
+            "h0_1_1": "00:00:00:00:01:01",
+            "h1_0_0": "00:00:00:01:00:00",
+            "h1_0_1": "00:00:00:01:00:01",
+            "h1_1_0": "00:00:00:01:01:00",
+            "h1_1_1": "00:00:00:01:01:01",
+            "h2_0_0": "00:00:00:02:00:00",
+            "h2_0_1": "00:00:00:02:00:01",
+            "h2_1_0": "00:00:00:02:01:00",
+            "h2_1_1": "00:00:00:02:01:01",
+            "h3_0_0": "00:00:00:03:00:00",
+            "h3_0_1": "00:00:00:03:00:01",
+            "h3_1_0": "00:00:00:03:01:00",
+            "h3_1_1": "00:00:00:03:01:01",
+        }
+
+        sw_counter = 1
+        for pod in range(pods):
+            pod_edge = []
+            for e in range(k // 2):
+                sw_name = f"s{sw_counter}"
+                sw_counter += 1
+                G.add_node(sw_name, type="switch", dpid=int(sw_name[1:]))
+                pod_edge.append(sw_name)
+                edge_switches.append(sw_name)
+
+                for h in range(hosts_per_edge):
+                    h_name = f"h{pod}_{e}_{h}"
+                    mac = host_mac_map[h_name]
+                    G.add_node(h_name, type="host", mac=mac, ip=f"10.{pod}.{e}.{h+1}")
+                    G.add_edge(h_name, sw_name, src_port=0, dst_port=h + 1)
+                    G.add_edge(sw_name, h_name, src_port=h + 1, dst_port=0)
+
+            pod_agg = []
+            for a in range(k // 2):
+                sw_name = f"s{sw_counter}"
+                sw_counter += 1
+                G.add_node(sw_name, type="switch", dpid=int(sw_name[1:]))
+                pod_agg.append(sw_name)
+                agg_switches.append(sw_name)
+                for edge in pod_edge:
+                    G.add_edge(
+                        edge,
+                        sw_name,
+                        src_port=10 + a,
+                        dst_port=20 + edge_switches.index(edge),
+                    )
+                    G.add_edge(
+                        sw_name,
+                        edge,
+                        src_port=20 + edge_switches.index(edge),
+                        dst_port=10 + a,
+                    )
+
+        for i in range((k // 2) ** 2):
+            sw_name = f"s{sw_counter}"
+            sw_counter += 1
+            G.add_node(sw_name, type="switch", dpid=int(sw_name[1:]))
+            core_switches.append(sw_name)
+
+        for i, core in enumerate(core_switches):
+            for j, agg in enumerate(agg_switches):
+                if i % (k // 2) == j % (k // 2):
+                    G.add_edge(core, agg, src_port=30 + i, dst_port=40 + j)
+                    G.add_edge(agg, core, src_port=40 + j, dst_port=30 + i)
+
+        return G
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def features_handler(self, ev):
@@ -203,7 +286,7 @@ class Controller(OSKenApp):
             self.__add_flow(datapath, 0, match, actions)
 
         # Запрос информации о портах
-        # self.request_port_desc(datapath)
+        self.request_port_desc(datapath)
 
         # Обновление маршрутов в таблице маршрутизации
         #
@@ -240,22 +323,35 @@ class Controller(OSKenApp):
         ]
 
         # Таблица потоков (корреспонденций)
-        match_flows = []
+        match_flows = set()
 
-        pods = 6
-        hosts_per_pod = 4
+        # Вместо ключей (MAC) использовать значения self.hosts[mac] — это имена узлов
+        hostnames = [
+            "h0_0_0",
+            "h0_0_1",
+            "h0_1_0",
+            "h0_1_1",
+            "h1_0_0",
+            "h1_0_1",
+            "h1_1_0",
+            "h1_1_1",
+            "h2_0_0",
+            "h2_0_1",
+            "h2_1_0",
+            "h2_1_1",
+            "h3_0_0",
+            "h3_0_1",
+            "h3_1_0",
+            "h3_1_1",
+        ]
+        for src in hostnames:
+            for dst in hostnames:
+                if src != dst:
+                    match_flows.add((src, dst, 100))
 
-        for i in range(1, pods + 1):
-            for j in range(1, hosts_per_pod + 1):
-                src = f"h{i}_{j}"
-                for ii in range(1, pods + 1):
-                    for jj in range(1, hosts_per_pod + 1):
-                        dst = f"h{ii}_{jj}"
-                        if src != dst:
-                            match_flows.append((src, dst, 100))
+        print("match_flows = ", match_flows)
 
-        demands = match_flows + [(d, s, v) for (s, d, v) in match_flows]
-
+        demands = list(match_flows)
         flows = generate_adaptive_shortest_paths(self.topo, demands)
 
         # flows = generate_b4_flows_paths_pulp(self.topo, demands)
@@ -436,6 +532,11 @@ class Controller(OSKenApp):
                     print("Pickle dump was wrote...")
 
             ip_pkt = pkt.get_protocol(ipv4.ipv4)
+
+            print(
+                f"[DEBUG] ARP: {arp_pkt}, IP: {ip_pkt}, SRC_MAC: {src_mac}, IN_PORT: {in_port}"
+            )
+
             if eth.ethertype in (0x0800, 0x0806):  # IPv4 или ARP
                 print(
                     f"[HOST] Discovered host {src_mac} on switch {dpid} port {in_port} ip_pkt {ip_pkt}"
@@ -513,70 +614,6 @@ class Controller(OSKenApp):
                     self.routing_tables[dpid].add(
                         (host_params["ip"], host_params["mac"], ports["dst_port"], None)
                     )
-
-    # УДАЛИТЬ
-    def install_full_paths(self):
-        """
-        Устанавливаем полные маршруты для каждой пары хостов.
-        """
-        hosts = [
-            (name, params)
-            for name, params in self.topo.nodes(data=True)
-            if params.get("type") == "host"
-        ]
-
-        for src_name, src_params in hosts:
-            for dst_name, dst_params in hosts:
-                if src_name == dst_name:
-                    continue
-
-                try:
-                    path = nx.shortest_path(self.topo, src_name, dst_name)
-                except nx.NetworkXNoPath:
-                    print(f"[WARN] Нет пути между {src_name} и {dst_name}")
-                    continue
-
-                print(f"[PATH] {src_name} -> {dst_name} via {path}")
-
-                # Проходим по всем парам свитчей вдоль пути
-                for i in range(1, len(path) - 1):
-                    current_node = path[i]
-                    next_node = path[i + 1]
-
-                    # Проверяем, что это свитч
-                    current_params = self.topo.nodes[current_node]
-                    if current_params.get("type") != "switch":
-                        continue
-
-                    # Получаем dpid свитча
-                    dpid = current_params["dpid"]
-
-                    # Получаем datapath
-                    datapath = self.datapaths.get(dpid)
-                    if datapath is None:
-                        continue
-
-                    parser = datapath.ofproto_parser
-
-                    # Находим порт выхода на следующий свитч/хост
-                    edge_data = self.topo.get_edge_data(current_node, next_node)
-                    if edge_data is None:
-                        continue
-
-                    out_port = edge_data.get("src_port")
-
-                    match = parser.OFPMatch(eth_type=0x0800, ipv4_dst=dst_params["ip"])
-                    actions = [
-                        parser.OFPActionSetField(eth_dst=dst_params["mac"]),
-                        parser.OFPActionOutput(out_port),
-                    ]
-                    self.__add_flow(datapath, 10, match, actions)
-
-                    # ARP
-                    match_arp = parser.OFPMatch(
-                        eth_type=0x0806, arp_tpa=dst_params["ip"]
-                    )
-                    self.__add_flow(datapath, 10, match_arp, actions)
 
     def __add_flow(
         self, datapath, priority, match, actions, idle_timeout=0, hard_timeout=0
