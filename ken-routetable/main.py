@@ -8,6 +8,7 @@ from os_ken.lib.packet import packet, ethernet, ipv4, arp
 from os_ken.lib.dpid import dpid_to_str
 import ipaddress
 
+
 class Controller(OSKenApp):
 
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
@@ -18,34 +19,34 @@ class Controller(OSKenApp):
         # Отдельные таблицы маршрутов для каждого коммутатора (по DPID)
         self.routing_tables = {
             1: {
-                "10.0.0.1/32": (1, "00:00:00:00:00:01"),
-                "10.0.0.2/32": (2, "00:00:00:00:00:02"),
-                "10.0.0.3/32": (3, "00:00:00:00:00:03"),
-                "10.0.0.4/32": (4, "00:00:00:00:00:04"),
+                "10.0.0.1/32": (1, "00:00:00:00:00:01", None),
+                "10.0.0.2/32": (2, "00:00:00:00:00:02", None),
+                "10.0.0.3/32": (3, "00:00:00:00:00:03", None),
+                "10.0.0.4/32": (4, "00:00:00:00:00:04", None),
             },
             2: {
-                "10.0.0.3/32": (2, "00:00:00:00:00:03"),
-                "10.0.0.4/32": (2, "00:00:00:00:00:04"),
-                "10.0.0.1/32": (1, "00:00:00:00:00:01"),
-                "10.0.0.2/32": (1, "00:00:00:00:00:02"),
+                "10.0.0.3/32": (2, "00:00:00:00:00:03", None),
+                "10.0.0.4/32": (2, "00:00:00:00:00:04", None),
+                "10.0.0.1/32": (1, "00:00:00:00:00:01", None),
+                "10.0.0.2/32": (1, "00:00:00:00:00:02", None),
             },
             3: {
-                "10.0.0.3/32": (2, "00:00:00:00:00:03"),
-                "10.0.0.4/32": (2, "00:00:00:00:00:04"),
-                "10.0.0.1/32": (1, "00:00:00:00:00:01"),
-                "10.0.0.2/32": (1, "00:00:00:00:00:02"),
+                "10.0.0.3/32": (2, "00:00:00:00:00:03", None),
+                "10.0.0.4/32": (2, "00:00:00:00:00:04", None),
+                "10.0.0.1/32": (1, "00:00:00:00:00:01", None),
+                "10.0.0.2/32": (1, "00:00:00:00:00:02", None),
             },
             4: {
-                "10.0.0.3/32": (2, "00:00:00:00:00:03"),
-                "10.0.0.4/32": (2, "00:00:00:00:00:04"),
-                "10.0.0.1/32": (1, "00:00:00:00:00:01"),
-                "10.0.0.2/32": (1, "00:00:00:00:00:02"),
+                "10.0.0.3/32": (2, "00:00:00:00:00:03", None),
+                "10.0.0.4/32": (2, "00:00:00:00:00:04", None),
+                "10.0.0.1/32": (1, "00:00:00:00:00:01", None),
+                "10.0.0.2/32": (1, "00:00:00:00:00:02", None),
             },
             5: {
-                "10.0.0.3/32": (4, "00:00:00:00:00:03"),
-                "10.0.0.4/32": (5, "00:00:00:00:00:04"),
-                "10.0.0.1/32": (2, "00:00:00:00:00:01"),
-                "10.0.0.2/32": (2, "00:00:00:00:00:02"),
+                "10.0.0.3/32": (4, "00:00:00:00:00:03", None),
+                "10.0.0.4/32": (5, "00:00:00:00:00:04", None),
+                "10.0.0.1/32": (2, "00:00:00:00:00:01", None),
+                "10.0.0.2/32": (2, "00:00:00:00:00:02", None),
             },
         }
 
@@ -64,33 +65,39 @@ class Controller(OSKenApp):
         if dpid not in self.routing_tables:
             self.logger.warning("No routing table for switch %s", dpid_to_str(dpid))
             return
-    
+
         # Устанавливаем правила для каждого маршрута
-        for prefix, (out_port, dst_mac) in self.routing_tables[dpid].items():
+        for prefix, (out_port, dst_mac, port) in self.routing_tables[dpid].items():
             network = ipaddress.ip_network(prefix)
-            
+
             # Правило для IP-пакетов
-            match = parser.OFPMatch(
-                eth_type=0x0800,  # IPv4
-                ipv4_dst=network.network_address
-            )
+            if port:
+                match = parser.OFPMatch(
+                    eth_type=0x0800,
+                    ipv4_dst=network.network_address,
+                    ip_proto=6,
+                    tcp_dst=port,
+                )
+            else:
+                match = parser.OFPMatch(
+                    eth_type=0x0800, ipv4_dst=network.network_address
+                )
+
             actions = [
                 parser.OFPActionSetField(eth_dst=dst_mac),
-                parser.OFPActionOutput(out_port)
+                parser.OFPActionOutput(out_port),
             ]
             self.__add_flow(datapath, 10, match, actions)
-            
+
             # Правило для ARP-запросов
             match = parser.OFPMatch(
-                eth_type=0x0806,  # ARP
-                arp_tpa=network.network_address
+                eth_type=0x0806, arp_tpa=network.network_address  # ARP
             )
             actions = [
                 parser.OFPActionSetField(eth_dst=dst_mac),
-                parser.OFPActionOutput(out_port)
+                parser.OFPActionOutput(out_port),
             ]
             self.__add_flow(datapath, 20, match, actions)
-
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def packet_in_handler(self, ev):
@@ -124,14 +131,22 @@ class Controller(OSKenApp):
             for prefix in routing_table:
                 net = ipaddress.ip_network(prefix)
                 if ipaddress.ip_address(dst_ip) in net:
-                    out_port, dst_mac = routing_table[prefix]
+                    out_port, dst_mac, port = routing_table[prefix]
 
                     actions = [
                         parser.OFPActionSetField(eth_dst=dst_mac),
-                        parser.OFPActionOutput(out_port)
+                        parser.OFPActionOutput(out_port),
                     ]
 
-                    match = parser.OFPMatch(eth_type=0x0800, ipv4_dst=dst_ip)
+                    if port:
+                        match = parser.OFPMatch(
+                            eth_type=0x0800,
+                            ipv4_dst=dst_ip,
+                            ip_proto=6,
+                            tcp_dst=port,
+                        )
+                    else:
+                        match = parser.OFPMatch(eth_type=0x0800, ipv4_dst=dst_ip)
                     self.__add_flow(datapath, 10, match, actions)
 
                     out = parser.OFPPacketOut(
@@ -139,10 +154,17 @@ class Controller(OSKenApp):
                         buffer_id=msg.buffer_id,
                         in_port=in_port,
                         actions=actions,
-                        data=msg.data if msg.buffer_id == ofproto.OFP_NO_BUFFER else None,
+                        data=(
+                            msg.data if msg.buffer_id == ofproto.OFP_NO_BUFFER else None
+                        ),
                     )
                     datapath.send_msg(out)
-                    self.logger.info("[DPID %s] IP packet to %s routed via port %s", dpid_to_str(dpid), dst_ip, out_port)
+                    self.logger.info(
+                        "[DPID %s] IP packet to %s routed via port %s",
+                        dpid_to_str(dpid),
+                        dst_ip,
+                        out_port,
+                    )
             return
 
         actions = [datapath.ofproto_parser.OFPActionOutput(ofproto.OFPP_FLOOD)]
@@ -156,20 +178,22 @@ class Controller(OSKenApp):
         datapath.send_msg(out)
         return
 
-    def __add_flow(self, datapath, priority, match, actions, idle_timeout=0, hard_timeout=0):
+    def __add_flow(
+        self, datapath, priority, match, actions, idle_timeout=0, hard_timeout=0
+    ):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
-        
+
         inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
-        
+
         mod = parser.OFPFlowMod(
             datapath=datapath,
             priority=priority,
             match=match,
             instructions=inst,
             idle_timeout=idle_timeout,
-            hard_timeout=hard_timeout
+            hard_timeout=hard_timeout,
         )
-        
+
         datapath.send_msg(mod)
         self.logger.debug("Added flow: %s", match)

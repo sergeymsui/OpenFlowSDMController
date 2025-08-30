@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 
 import pickle
+from threading import Thread
+
 import networkx as nx
 from time import sleep
 from collections import defaultdict
@@ -14,30 +16,64 @@ from os_ken.lib.dpid import dpid_to_str
 from os_ken.lib import hub
 from os_ken.lib.packet import packet, ethernet, lldp
 
+# from utils import (
+    # generate_ilp_flows,
+    # generate_greedy_flows,
+    # generate_msa_flows,
+    # generate_fwa_flows,
+    # generate_ustm_flows,
+# )
+
+from ilp_flows import generate_ilp_flows
+
+# Flow state
+flowstate = True
+topo_name = "b4_topograph.pickle"
+
 
 class Controller(OSKenApp):
-
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
         super(Controller, self).__init__(*args, **kwargs)
 
-        self.topo = pickle.load(open("filename.pickle", "rb"))
-        # self.topo = nx.DiGraph()
+        self.topo = pickle.load(open(topo_name, "rb")) if flowstate else nx.DiGraph()
+        self.datapaths = dict()
+        self.routing_tables = defaultdict(set)
 
-        self.routing_tables = defaultdict(list)
-
-        self.datapaths = {}
         self.hosts = {
             "00:00:00:00:00:01": "h1",
             "00:00:00:00:00:02": "h2",
             "00:00:00:00:00:03": "h3",
             "00:00:00:00:00:04": "h4",
+            "00:00:00:00:00:05": "h5",
+            "00:00:00:00:00:06": "h6",
+            "00:00:00:00:00:07": "h7",
+            "00:00:00:00:00:08": "h8",
+            "00:00:00:00:00:09": "h9",
+            "00:00:00:00:00:0a": "h10",
+            "00:00:00:00:00:0b": "h11",
+            "00:00:00:00:00:0c": "h12",
+            "00:00:00:00:00:0d": "h13",
+            "00:00:00:00:00:0e": "h14",
+            "00:00:00:00:00:0f": "h15",
+            "00:00:00:00:00:10": "h16",
+            "00:00:00:00:00:11": "h17",
+            "00:00:00:00:00:12": "h18",
+            "00:00:00:00:00:13": "h19",
         }
 
         def show():
             while True:
-                sleep(1)
+                sleep(10)
+
+        def process(target):
+            print("Wait calculation process")
+            sleep(5)
+            print("Calculate...")
+            target.update_routes()
+
+        self._delayed_update_thread = Thread(target=process, args=(self,))
 
         hub.spawn(show)
         hub.spawn(self._lldp_loop)
@@ -54,7 +90,6 @@ class Controller(OSKenApp):
         datapath = ev.msg.datapath
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
-
         self.datapaths[datapath.id] = datapath
 
         eth_types = [0x88CC, 0x0800, 0x0806]
@@ -68,8 +103,84 @@ class Controller(OSKenApp):
             print("Handshake taken place with {}".format(dpid_to_str(datapath.id)))
             self.__add_flow(datapath, 0, match, actions)
 
-        self.request_port_desc(datapath)  # Запрос информации о портах
-        self.reroute(datapath)
+        # Запрос информации о портах
+        self.request_port_desc(datapath)
+
+        # Обновление маршрутов в таблице маршрутизации
+        # self.reroute(datapath)
+
+        if flowstate:
+            self.schedule_update_routes()
+
+    def schedule_update_routes(self):
+        # Если уже идёт ожидание — сбрасываем его и запускаем заново
+        if self._delayed_update_thread.is_alive():
+            pass
+        else:
+            self._delayed_update_thread.start()
+
+    def update_routes(self):
+        match_flows = [
+            ("h1", "h10", 100),
+            ("h2", "h9", 100),
+            ("h3", "h11", 100),
+            ("h4", "h12", 100),
+            ("h5", "h7", 100),
+            ("h6", "h8", 100),
+            ("h7", "h2", 100),
+            ("h8", "h4", 100),
+            ("h9", "h5", 100),
+            ("h10", "h1", 100),
+        ]
+
+        demands = [(s, d) for (s, d, _) in match_flows] + [(d, s) for (s, d, _) in match_flows]
+
+        flows = generate_ilp_flows(self.topo, demands)
+        # flows = generate_greedy_flows(self.topo, targets_list)
+        # flows = generate_msa_flows(self.topo, targets_list)
+        # flows = generate_fwa_flows(self.topo, targets_list)
+        # flows = generate_ustm_flows(self.topo, targets_list)
+
+        # Для каждого потока берем idx и его маршрут
+        for idx, path in flows.items():
+            # _, _, tcp_port = match_flows[idx]
+            tcp_port = None
+
+            print(f"[MSG] idx: {idx} path: {path}")
+
+            # Находим хост получатель - последный в списке маршрутов
+            # Для занесения IP адреса и порта используется значение из `host_params`
+            for _, host_params in [
+                (name, params)
+                for name, params in self.topo.nodes(data=True)
+                if "type" in params and params["type"] == "host" and name == path[-1]
+            ]:
+                # Определяем пары коммутаторов
+                for src_node, dst_node in zip(path[1:], path):
+                    for ports in [
+                        ports
+                        for (source, target, ports) in self.topo.edges(data=True)
+                        if source == src_node and target == dst_node
+                    ]:
+                        # Находим пары узлов и физические порты подключения
+                        for _, switch_params in [
+                            (name, params)
+                            for name, params in self.topo.nodes(data=True)
+                            if "type" in params
+                            and params["type"] == "switch"
+                            and name == dst_node
+                        ]:
+                            # Заносим данные в таблицу маршрутизации
+                            self.routing_tables[switch_params["dpid"]].add(
+                                (
+                                    host_params["ip"],
+                                    host_params["mac"],
+                                    ports["dst_port"],
+                                    tcp_port,
+                                )
+                            )
+
+        pass
 
     def _lldp_loop(self):
         while True:
@@ -126,7 +237,6 @@ class Controller(OSKenApp):
                 data=pkt.data,
             )
             datapath.send_msg(out)
-            # print(f"[LLDP] Sent from DPID={dpid} port={port.port_no}")
 
     def send_features_request(self, datapath):
         parser = datapath.ofproto_parser
@@ -159,9 +269,6 @@ class Controller(OSKenApp):
                     neighbor_dpid = int(tlv.chassis_id.decode())
                 elif isinstance(tlv, lldp.PortID):
                     neighbor_port = int(tlv.port_id.decode())
-            # print(
-            #     f"Link discovered: {dpid}:{in_port} -> {neighbor_dpid}:{neighbor_port}"
-            # )
 
             self.topo.add_edge(
                 f"s{int(dpid)}",
@@ -175,8 +282,6 @@ class Controller(OSKenApp):
                 src_port=neighbor_port,
                 dst_port=in_port,
             )
-
-
 
         msg = ev.msg
         parser = msg.datapath.ofproto_parser
@@ -200,36 +305,49 @@ class Controller(OSKenApp):
                     self.hosts[src_mac], f"s{int(dpid)}", src_port=0, dst_port=in_port
                 )
 
-                # pickle.dump(self.topo, open("filename.pickle", "wb"))
+                if not flowstate:
+                    pickle.dump(self.topo, open(topo_name, "wb"))
 
             ip_pkt = pkt.get_protocol(ipv4.ipv4)
             if eth.ethertype in (0x0800, 0x0806):  # IPv4 или ARP
                 print(
                     f"[HOST] Discovered host {src_mac} on switch {dpid} port {in_port} ip_pkt {ip_pkt}"
                 )
-        
-        if dpid in self.routing_tables:
-            table = self.routing_tables[ dpid ]
 
-            for ip, mac, port in table:
-                match = parser.OFPMatch(eth_type=0x0800, ipv4_dst=ip)
+        if dpid in self.routing_tables:
+            for ip, mac, out_port, tcp_port in self.routing_tables[dpid]:
+
+                if not flowstate:
+                    continue
+
+                if tcp_port:
+                    match = parser.OFPMatch(
+                        eth_type=0x0800, ipv4_dst=ip, ip_proto=6, tcp_dst=tcp_port
+                    )
+                else:
+                    match = parser.OFPMatch(eth_type=0x0800, ipv4_dst=ip)
+
                 actions = [
                     parser.OFPActionSetField(eth_dst=mac),
-                    parser.OFPActionOutput(port),
+                    parser.OFPActionOutput(out_port),
                 ]
                 self.__add_flow(datapath, 10, match, actions)
+
+                print(
+                    f"[SET] dpid: {dpid} ip: {ip} mac: {mac} out_port: {out_port} tcp_port: {tcp_port}"
+                )
 
                 # Правило для ARP-запросов
                 match = parser.OFPMatch(eth_type=0x0806, arp_tpa=ip)
                 actions = [
                     parser.OFPActionSetField(eth_dst=mac),
-                    parser.OFPActionOutput(port),
+                    parser.OFPActionOutput(out_port),
                 ]
                 self.__add_flow(datapath, 10, match, actions)
 
     def reroute(self, datapath):
         dpid = datapath.id
-    
+
         for switch_name, _ in [
             (name, params)
             for name, params in self.topo.nodes(data=True)
@@ -252,19 +370,21 @@ class Controller(OSKenApp):
                     ]
                 except nx.exception.NetworkXNoPath:
                     continue
+                except nx.exception.NodeNotFound:
+                    continue
 
                 print(
                     f"[MSG] switch_name: {switch_name} host_name: {host_name} shortest_path: {shortest_path}"
                 )
-                
+
                 src_node, dst_node = shortest_path[-2], shortest_path[-1]
                 for ports in [
                     ports
                     for (source, target, ports) in self.topo.edges(data=True)
                     if source == src_node and target == dst_node
                 ]:
-                    self.routing_tables[ dpid ].append(
-                        (host_params["ip"], host_params["mac"], ports["dst_port"])
+                    self.routing_tables[dpid].add(
+                        (host_params["ip"], host_params["mac"], ports["dst_port"], None)
                     )
 
     def __add_flow(
