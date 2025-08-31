@@ -131,6 +131,9 @@ def generate_adaptive_shortest_paths(
 
 
 class Controller(OSKenApp):
+    """
+    Основной класс контроллера
+    """
 
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
@@ -144,7 +147,6 @@ class Controller(OSKenApp):
         # Загрузка топологии
         self.topo = pickle.load(open(topo_name, "rb")) if flowstate else nx.DiGraph()
 
-        # self.topo = self.build_clos_topology()
         self.datapaths = dict()
         # Таблица маршрутизации
         self.routing_tables = defaultdict(set)
@@ -177,87 +179,6 @@ class Controller(OSKenApp):
 
         self._delayed_update_thread = Thread(target=process, args=(self,))
         hub.spawn(self._lldp_loop)
-
-    def build_clos_topology(self, k=4, hosts_per_edge=2):
-        """
-        Генерация Clos‑топологии (fat-tree) вручную в виде nx.DiGraph.
-        """
-        G = nx.DiGraph()
-        pods = k
-        core_switches = []
-        agg_switches = []
-        edge_switches = []
-
-        host_mac_map = {
-            "h0_0_0": "00:00:00:00:00:02",
-            "h0_0_1": "00:00:00:00:00:01",
-            "h0_1_0": "00:00:00:00:01:00",
-            "h0_1_1": "00:00:00:00:01:01",
-            "h1_0_0": "00:00:00:01:00:00",
-            "h1_0_1": "00:00:00:01:00:01",
-            "h1_1_0": "00:00:00:01:01:00",
-            "h1_1_1": "00:00:00:01:01:01",
-            "h2_0_0": "00:00:00:02:00:00",
-            "h2_0_1": "00:00:00:02:00:01",
-            "h2_1_0": "00:00:00:02:01:00",
-            "h2_1_1": "00:00:00:02:01:01",
-            "h3_0_0": "00:00:00:03:00:00",
-            "h3_0_1": "00:00:00:03:00:01",
-            "h3_1_0": "00:00:00:03:01:00",
-            "h3_1_1": "00:00:00:03:01:01",
-        }
-
-        sw_counter = 1
-        for pod in range(pods):
-            pod_edge = []
-            for e in range(k // 2):
-                sw_name = f"s{sw_counter}"
-                sw_counter += 1
-                G.add_node(sw_name, type="switch", dpid=int(sw_name[1:]))
-                pod_edge.append(sw_name)
-                edge_switches.append(sw_name)
-
-                for h in range(hosts_per_edge):
-                    h_name = f"h{pod}_{e}_{h}"
-                    mac = host_mac_map[h_name]
-                    G.add_node(h_name, type="host", mac=mac, ip=f"10.{pod}.{e}.{h+1}")
-                    G.add_edge(h_name, sw_name, src_port=0, dst_port=h + 1)
-                    G.add_edge(sw_name, h_name, src_port=h + 1, dst_port=0)
-
-            pod_agg = []
-            for a in range(k // 2):
-                sw_name = f"s{sw_counter}"
-                sw_counter += 1
-                G.add_node(sw_name, type="switch", dpid=int(sw_name[1:]))
-                pod_agg.append(sw_name)
-                agg_switches.append(sw_name)
-                for edge in pod_edge:
-                    G.add_edge(
-                        edge,
-                        sw_name,
-                        src_port=10 + a,
-                        dst_port=20 + edge_switches.index(edge),
-                    )
-                    G.add_edge(
-                        sw_name,
-                        edge,
-                        src_port=20 + edge_switches.index(edge),
-                        dst_port=10 + a,
-                    )
-
-        for i in range((k // 2) ** 2):
-            sw_name = f"s{sw_counter}"
-            sw_counter += 1
-            G.add_node(sw_name, type="switch", dpid=int(sw_name[1:]))
-            core_switches.append(sw_name)
-
-        for i, core in enumerate(core_switches):
-            for j, agg in enumerate(agg_switches):
-                if i % (k // 2) == j % (k // 2):
-                    G.add_edge(core, agg, src_port=30 + i, dst_port=40 + j)
-                    G.add_edge(agg, core, src_port=40 + j, dst_port=30 + i)
-
-        return G
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def features_handler(self, ev):
@@ -306,43 +227,12 @@ class Controller(OSKenApp):
                 self._thread_active = True
 
     def update_routes(self):
-        match_flows = [
-            ("h1_1", "h6_1", 100),
-            ("h1_2", "h6_2", 100),
-            ("h1_3", "h6_3", 100),
-            ("h1_4", "h6_4", 100),
-            ("h2_1", "h5_1", 100),
-            ("h2_2", "h5_2", 100),
-            ("h2_3", "h5_3", 100),
-            ("h2_4", "h5_4", 100),
-            ("h3_1", "h4_1", 100),
-            ("h3_2", "h4_2", 100),
-            ("h3_3", "h4_3", 100),
-            ("h3_4", "h4_4", 100),
-        ]
-
         # Таблица потоков (корреспонденций)
         match_flows = set()
 
         # Вместо ключей (MAC) использовать значения self.hosts[mac] — это имена узлов
-        hostnames = [
-            "h0_0_0",
-            "h0_0_1",
-            "h0_1_0",
-            "h0_1_1",
-            "h1_0_0",
-            "h1_0_1",
-            "h1_1_0",
-            "h1_1_1",
-            "h2_0_0",
-            "h2_0_1",
-            "h2_1_0",
-            "h2_1_1",
-            "h3_0_0",
-            "h3_0_1",
-            "h3_1_0",
-            "h3_1_1",
-        ]
+        hostnames = [v for [_, v] in self.hosts]
+
         for src in hostnames:
             for dst in hostnames:
                 if src != dst:
@@ -353,7 +243,6 @@ class Controller(OSKenApp):
         demands = list(match_flows)
         flows = generate_adaptive_shortest_paths(self.topo, demands)
 
-        # flows = generate_b4_flows_paths_pulp(self.topo, demands)
         # flows = generate_ilp_flows(self.topo, demands)
         # flows = generate_greedy_flows(self.topo, demands)
         # flows = generate_msa_flows(self.topo, demands)
