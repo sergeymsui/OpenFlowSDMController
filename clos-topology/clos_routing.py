@@ -22,17 +22,16 @@ from os_ken.lib.packet import packet, ethernet, lldp
 flowstate = True
 topo_name = "clos_topograph.pickle"
 
-
-from utils import (
-    generate_msa_flows,
-    generate_fwa_flows,
-    generate_ustm_flows,
-)
+# from utils import (
+#     generate_msa_flows,
+#     generate_fwa_flows,
+#     generate_ustm_flows,
+# )
 
 from threading import Lock
 
-from ilp_flows import generate_ilp_flows
-from greedy_flows import generate_greedy_flows
+# from ilp_flows import generate_ilp_flows
+# from greedy_flows import generate_greedy_flows
 
 
 def generate_load_aware_paths(G: nx.DiGraph, demands: list):
