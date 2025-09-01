@@ -57,23 +57,6 @@ hosts = {
 
 
 class ClosTopology(Topo):
-    """Простая параметризуемая Clos (fat‑tree) топология.
-
-    :param int k: Число подов (должно быть четным). Каждый под содержит
-        ``k/2`` edge‑коммутаторов и ``k/2`` aggregation‑коммутаторов.
-    :param int hosts_per_edge: Количество хостов, подключенных к каждому
-        edge‑коммутатору.
-    :param int agg_bw: Пропускная способность (в Мбит/с) на линках
-        edge‑→‑aggregation. Если не задана, используется значение по
-        умолчанию Mininet.
-    :param int core_bw: Пропускная способность (в Мбит/с) на линках
-        aggregation‑→‑core. Ограничивая этот канал, можно создавать
-        узкие места в верхнем уровне сети.
-    :param int host_bw: Пропускная способность (в Мбит/с) на линках
-        host‑→‑edge. Обычно равна пропускной способности сетевых карт
-        серверов.
-    """
-
     def build(self, k=4, hosts_per_edge=2, agg_bw=1000, core_bw=500, host_bw=1000):
         if k % 2 != 0:
             raise ValueError("k must be even for a fat‑tree topology")

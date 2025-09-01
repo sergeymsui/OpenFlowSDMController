@@ -30,8 +30,8 @@ topo_name = "clos_topograph.pickle"
 
 from threading import Lock
 
-# from ilp_flows import generate_ilp_flows
-# from greedy_flows import generate_greedy_flows
+from ilp_flows import generate_ilp_flows
+from greedy_flows import generate_greedy_flows
 
 
 def generate_load_aware_paths(G: nx.DiGraph, demands: list):
@@ -231,18 +231,16 @@ class Controller(OSKenApp):
         match_flows = set()
 
         # Вместо ключей (MAC) использовать значения self.hosts[mac] — это имена узлов
-        hostnames = [v for [_, v] in self.hosts]
+        hostnames = [v for [_, v] in self.hosts.items()]
 
         for src in hostnames:
             for dst in hostnames:
                 if src != dst:
                     match_flows.add((src, dst, 100))
 
-        print("match_flows = ", match_flows)
-
         demands = list(match_flows)
-        flows = generate_adaptive_shortest_paths(self.topo, demands)
 
+        flows = generate_adaptive_shortest_paths(self.topo, demands)
         # flows = generate_ilp_flows(self.topo, demands)
         # flows = generate_greedy_flows(self.topo, demands)
         # flows = generate_msa_flows(self.topo, demands)
