@@ -7,111 +7,136 @@ from mininet.cli import CLI
 from mininet.log import setLogLevel
 from time import sleep
 
-# ---------- Утилиты ----------
 
-def mac_for(pod, edge, host):
-    # MAC вида 00:00:pp:ee:hh (pp/ee/hh в hex, 2 символа)
-    return f"00:00:{pod:02x}:{edge:02x}:{host:02x}"
+hosts = {
+    # Pod 0
+    "h0_0_0": "00:00:00:00:00:02",
+    "h0_0_1": "00:00:00:00:00:01",
+    "h0_1_0": "00:00:00:00:01:00",
+    "h0_1_1": "00:00:00:00:01:01",
+    "h0_2_0": "00:00:00:00:02:00",
+    "h0_2_1": "00:00:00:00:02:01",
 
-# ---------- Топология Clos / fat-tree ----------
+    # Pod 1
+    "h1_0_0": "00:00:00:01:00:00",
+    "h1_0_1": "00:00:00:01:00:01",
+    "h1_1_0": "00:00:00:01:01:00",
+    "h1_1_1": "00:00:00:01:01:01",
+    "h1_2_0": "00:00:00:01:02:00",
+    "h1_2_1": "00:00:00:01:02:01",
+
+    # Pod 2
+    "h2_0_0": "00:00:00:02:00:00",
+    "h2_0_1": "00:00:00:02:00:01",
+    "h2_1_0": "00:00:00:02:01:00",
+    "h2_1_1": "00:00:00:02:01:01",
+    "h2_2_0": "00:00:00:02:02:00",
+    "h2_2_1": "00:00:00:02:02:01",
+
+    # Pod 3
+    "h3_0_0": "00:00:00:03:00:00",
+    "h3_0_1": "00:00:00:03:00:01",
+    "h3_1_0": "00:00:00:03:01:00",
+    "h3_1_1": "00:00:00:03:01:01",
+    "h3_2_0": "00:00:00:03:02:00",
+    "h3_2_1": "00:00:00:03:02:01",
+
+    # Pod 4
+    "h4_0_0": "00:00:00:04:00:00",
+    "h4_0_1": "00:00:00:04:00:01",
+    "h4_1_0": "00:00:00:04:01:00",
+    "h4_1_1": "00:00:00:04:01:01",
+    "h4_2_0": "00:00:00:04:02:00",
+    "h4_2_1": "00:00:00:04:02:01",
+
+    # Pod 5
+    "h5_0_0": "00:00:00:05:00:00",
+    "h5_0_1": "00:00:00:05:00:01",
+    "h5_1_0": "00:00:00:05:01:00",
+    "h5_1_1": "00:00:00:05:01:01",
+    "h5_2_0": "00:00:00:05:02:00",
+    "h5_2_1": "00:00:00:05:02:01",
+}
 
 class ClosTopology(Topo):
-    """
-    Параметризуемая Clos (fat-tree).
-      - pods = k (k чётное)
-      - в каждом поде: k/2 edge и k/2 agg
-      - core-коммутаторов: (k/2)^2, разбиты на (k/2) групп по (k/2)
-      - каждый agg в поде подключается к ровно одному core в каждой группе,
-        причём берётся «столбец» = индекс agg внутри пода (каноническая разводка)
-    """
-
     def build(self, k=6, hosts_per_edge=2, agg_bw=1000, core_bw=500, host_bw=1000):
         if k % 2 != 0:
-            raise ValueError("k must be even for a fat-tree topology")
+            raise ValueError("k must be even for a fat‑tree topology")
 
         pods = k
-        edge_per_pod = k // 2
-        agg_per_pod  = k // 2
+        edge_switches = []  # список всех edge‑коммутаторов
+        agg_switches = []  # список всех aggregation‑коммутаторов
+        core_switches = []  # список всех core‑коммутаторов
 
-        edge_switches = []  # все edge
-        agg_switches  = []  # все agg
-        core_switches = []  # все core
+        # Счетчик для уникальных имен коммутаторов
+        switch_counter = 1
 
-        # для удобства: списки по подам
-        pod_edges = []  # [ [edge s1..], [edge s..], ...]
-        pod_aggs  = []
-
-        sw_id = 1
-
-        # --- Строим поды: edge + hosts, затем agg, и линки edge<->agg ---
+        # Построение подов: в каждом поде k/2 edge и k/2 aggregation коммутаторов
+        # и hosts_per_edge хостов на каждый edge
         for pod in range(pods):
-            cur_edges = []
-            for e_idx in range(edge_per_pod):
-                sname = f"s{sw_id}"; sw_id += 1
-                s = self.addSwitch(sname)
-                cur_edges.append(s)
-                edge_switches.append(s)
+            # Edge‑коммутаторы в текущем поде
+            pod_edges = []
+            for edge_idx in range(k // 2):
+                sw_name = f"s{switch_counter}"
+                sw = self.addSwitch(sw_name)
+                switch_counter += 1
+                pod_edges.append(sw)
+                edge_switches.append(sw)
 
-                # хосты на каждом edge
-                for h_idx in range(hosts_per_edge):
-                    hname = f"h{pod}_{e_idx}_{h_idx}"
-                    mac = mac_for(pod, e_idx, h_idx)
-                    h = self.addHost(hname, mac=mac)  # IP пусть выдаёт Mininet
-                    self.addLink(h, s, bw=host_bw)
+                # Подключаем хосты к edge‑коммутатору
+                for host_idx in range(hosts_per_edge):
+                    host_name = f"h{pod}_{edge_idx}_{host_idx}"
+                    mac = hosts[host_name]
+                    host = self.addHost(host_name, mac=mac)
+                    print(mac, host)
+                    # Хост‑edge link
+                    self.addLink(host, sw, bw=host_bw)
 
-            pod_edges.append(cur_edges)
+            # Aggregation‑коммутаторы в текущем поде
+            pod_aggs = []
+            for agg_idx in range(k // 2):
+                sw_name = f"s{switch_counter}"
+                sw = self.addSwitch(sw_name)
+                switch_counter += 1
+                pod_aggs.append(sw)
+                agg_switches.append(sw)
 
-            cur_aggs = []
-            for a_idx in range(agg_per_pod):
-                sname = f"s{sw_id}"; sw_id += 1
-                s = self.addSwitch(sname)
-                cur_aggs.append(s)
-                agg_switches.append(s)
+                # Подключаем каждый edge‑коммутатор из этого пода к текущему aggregation‑коммутатору
+                for edge_sw in pod_edges:
+                    # Указываем пропускную способность на линке edge‑→‑aggregation
+                    self.addLink(edge_sw, sw, bw=agg_bw)
 
-                # полносвязно edge внутри пода → agg
-                for e_sw in cur_edges:
-                    self.addLink(e_sw, s, bw=agg_bw)
+        # Core‑коммутаторы: их число (k/2)^2
+        num_core = (k // 2) ** 2
+        for core_idx in range(num_core):
+            sw_name = f"s{switch_counter}"
+            sw = self.addSwitch(sw_name)
+            switch_counter += 1
+            core_switches.append(sw)
 
-            pod_aggs.append(cur_aggs)
+        # Подключаем каждый aggregation‑коммутатор ко всем core‑коммутаторам.
+        # Можно уменьшить количество связей для создания менее избыточной топологии.
+        for agg_sw in agg_switches:
+            for core_sw in core_switches:
+                # Указываем пропускную способность на линке aggregation‑→‑core
+                self.addLink(agg_sw, core_sw, bw=core_bw)
 
-        # --- Core-коммутаторы ---
-        num_groups = k // 2
-        group_size = k // 2
-        total_core = (k // 2) ** 2
-
-        # создаём core и разбиваем на группы
-        for _ in range(total_core):
-            sname = f"s{sw_id}"; sw_id += 1
-            core_switches.append(self.addSwitch(sname))
-
-        # core-группы: список списков размером [num_groups][group_size]
-        core_groups = [
-            core_switches[g*group_size:(g+1)*group_size]
-            for g in range(num_groups)
-        ]
-
-        # --- Подключаем agg к core «по столбцам» ---
-        for pod in range(pods):
-            for a_idx, agg_sw in enumerate(pod_aggs[pod]):  # a_idx ∈ [0..k/2-1]
-                for g in range(num_groups):                 # по одному core из каждой группы
-                    core_sw = core_groups[g][a_idx]
-                    self.addLink(agg_sw, core_sw, bw=core_bw)
-
-# ---------- Запуск сценария Inter-pod only ----------
 
 def run_test():
-    """
-    Inter-pod only: источники — поды [0..(k/2-1)], приёмники — поды [(k/2)..(k-1)].
-    k=6 => источники: 0,1,2; приёмники: 3,4,5
+    """Запускает Clos‑топологию и выполняет iperf‑тесты.
+
+    Трафик генерируется только между группами подов, чтобы насытить
+    восходящие каналы core‑уровня. Для демонстрации создаются потоки
+    от хостов в первых половинах подов к хостам во второй половине.
     """
     setLogLevel("info")
 
     # Параметры топологии
-    k = 6                   # чётное
+    k = 6  # должно быть четным
     hosts_per_edge = 2
-    host_bw = 1000          # Мбит/с host↔edge
-    agg_bw  = 1000          # Мбит/с edge↔agg
-    core_bw = 500           # Мбит/с agg↔core (узкое место)
+    agg_bw = 1000  # Мбит/с между edge и аггрегатором
+    core_bw = 500  # Мбит/с между аггрегатором и core
+    host_bw = 1000  # Мбит/с между хостом и edge
 
     topo = ClosTopology(
         k=k,
@@ -121,53 +146,54 @@ def run_test():
         host_bw=host_bw,
     )
 
-    # Контроллер (убедитесь, что ваш SDN-контроллер слушает этот адрес/порт)
+    # Используем удаленный контроллер. Ожидается, что он запущен и знает о топологии.
     controller = RemoteController("c0", ip="127.0.0.1", port=6633)
 
-    # Mininet
+    # Запускаем Mininet. autoSetMacs=True назначит MAC‑адреса в зависимости от имени узла,
+    # но мы уже передали MAC‑адреса хостам, поэтому оставляем значение по умолчанию False.
     net = Mininet(topo=topo, switch=OVSSwitch, controller=controller, link=TCLink)
     net.start()
 
-    # (опционально) принудительно включим OpenFlow13 на свитчах
-    for s in net.switches:
-        s.cmd(f"ovs-vsctl set Bridge {s.name} protocols=OpenFlow13")
-
-    # Дадим свитчам сконнектиться с контроллером
+    # Небольшая пауза, чтобы коммутаторы установили соединение с контроллером
     sleep(5)
 
-    # Разобьём хосты по подам по имени h{pod}_{edge}_{host}
+    # Получаем список хостов, сгруппировав их по подам
     hosts_by_pod = {}
-    for h in net.hosts:
-        pod_idx = int(h.name.split('_')[0][1:])  # 'h3_1_0' -> '3'
-        hosts_by_pod.setdefault(pod_idx, []).append(h)
+    for host in net.hosts:
+        # Имя вида h{pod}_{edge}_{host}
+        parts = host.name[1:].split("_")
+        pod_idx = int(parts[0])
+        hosts_by_pod.setdefault(pod_idx, []).append(host)
 
-    # Поднимем iperf-серверы
-    for h in net.hosts:
-        # используйте iperf3 если iperf отсутствует: "iperf3 -s -D"
-        h.cmd(f"iperf -s -i 1 > /tmp/iperf_server_{h.name}.log &")
+    # Запускаем iperf‑сервер на каждом хосте
+    for host in net.hosts:
+        host.cmd(f"iperf -s -i 1 > /tmp/iperf_server_{host.name}.log &")
 
+    # Дадим серверам подняться
     sleep(3)
 
-    # Inter-pod only: источники из pod ∈ [0..k/2-1], приёмники из pod ∈ [k/2..k-1]
+    # Формируем список demand‑ов: источники из первой половины подов (0..(k/2 - 1)),
+    # назначения из второй половины (k/2 .. k-1). Такие потоки будут
+    # обязательно проходить через core‑коммутаторы и создадут нагрузку.
     demands = []
-    for src_pod in range(k // 2):          # 0,1,2
-        for dst_pod in range(k // 2, k):   # 3,4,5
-            for src_h in hosts_by_pod.get(src_pod, []):
-                for dst_h in hosts_by_pod.get(dst_pod, []):
-                    demands.append((src_h, dst_h))
+    for src_pod in range(k // 2):
+        for src_host in hosts_by_pod.get(src_pod, []):
+            for dst_pod in range(k // 2, k):
+                for dst_host in hosts_by_pod.get(dst_pod, []):
+                    demands.append((src_host, dst_host))
+                    print(src_host.name, dst_host.name)
 
-    # Запустим iperf-клиентов (100 Мбит/с на поток, 60 секунд)
-    for src_h, dst_h in demands:
-        dst_ip = dst_h.IP()
-        cmd = (
-            f"iperf -c {dst_ip} -b 100M -t 60 -i 1 "
-            f"> /tmp/iperf_client_{src_h.name}_to_{dst_h.name}.log &"
-        )
-        src_h.cmd(cmd)
+    # Запускаем iperf‑клиенты для каждого demand. Ограничиваем скорость в 100 Мбит/с,
+    # чтобы при достаточном количестве потоков перегрузить core‑уровень.
+    for src_host, dst_host in demands:
+        dst_ip = dst_host.IP()
+        cmd = f"iperf -c {dst_ip} -b 100M -t 60 -i 1 > /tmp/iperf_client_{src_host.name}_to_{dst_host.name}.log &"
+        src_host.cmd(cmd)
 
-    print("Запущено: k=6, Inter-pod only (pods 0–2 -> pods 3–5). Откройте CLI для проверки.")
+    print("Топология запущена, iperf‑трафик генерируется. Можно подключиться к CLI.")
     CLI(net)
     net.stop()
+
 
 if __name__ == "__main__":
     run_test()
