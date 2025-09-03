@@ -59,7 +59,7 @@ hosts = {
 }
 
 class ClosTopology(Topo):
-    def build(self, k=6, hosts_per_edge=2, agg_bw=1000, core_bw=500, host_bw=1000):
+    def build(self, k, hosts_per_edge=2, agg_bw=1000, core_bw=500, host_bw=1000):
         if k % 2 != 0:
             raise ValueError("k must be even for a fat‑tree topology")
 
@@ -132,7 +132,7 @@ def run_test():
     setLogLevel("info")
 
     # Параметры топологии
-    k = 6  # должно быть четным
+    k = 4  # должно быть четным
     hosts_per_edge = 2
     agg_bw = 1000  # Мбит/с между edge и аггрегатором
     core_bw = 500  # Мбит/с между аггрегатором и core
@@ -187,7 +187,8 @@ def run_test():
     # чтобы при достаточном количестве потоков перегрузить core‑уровень.
     for src_host, dst_host in demands:
         dst_ip = dst_host.IP()
-        cmd = f"iperf -c {dst_ip} -b 100M -t 60 -i 1 > /tmp/iperf_client_{src_host.name}_to_{dst_host.name}.log &"
+        cmd = f"iperf -c {dst_ip} -b 100M -t 6000 -i 1 > /tmp/iperf_client_{src_host.name}_to_{dst_host.name}.log &"
+        print(cmd, f"between: {src_host} -> {dst_host}")
         src_host.cmd(cmd)
 
     print("Топология запущена, iperf‑трафик генерируется. Можно подключиться к CLI.")
