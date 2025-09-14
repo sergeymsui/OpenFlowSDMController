@@ -531,6 +531,29 @@ func main() {
 	}
 	fmt.Printf("Channels CSV: %s\n", a.OutChannels)
 
+	// Общие метрики по каналам
+	var chAvgThrMean, chMaxThr, chMLUAvgMean, chMLUPeakMax float64
+	for _, r := range channels {
+		chAvgThrMean += r.AvgBps
+		if r.PeakBps > chMaxThr {
+			chMaxThr = r.PeakBps
+		}
+		chMLUAvgMean += r.MLUAvg
+		if r.MLUPeak > chMLUPeakMax {
+			chMLUPeakMax = r.MLUPeak
+		}
+	}
+	if len(channels) > 0 {
+		chAvgThrMean /= float64(len(channels))
+		chMLUAvgMean /= float64(len(channels))
+	}
+
+	fmt.Println("\n=== CHANNELS OVERALL ===")
+	fmt.Printf("Avg throughput (mean of per-channel avg): %s\n", humanBps(chAvgThrMean))
+	fmt.Printf("Max throughput (max per-channel peak):   %s\n", humanBps(chMaxThr))
+	fmt.Printf("Avg MLU (mean of MLU_avg):               %.2f%%\n", chMLUAvgMean*100.0)
+	fmt.Printf("Max MLU (max of MLU_peak):               %.2f%%\n", chMLUPeakMax*100.0)
+
 	/* ---------- FLOWS (throughput per flow) ---------- */
 
 	var ff []string
@@ -673,5 +696,29 @@ func main() {
 		fmt.Printf("  %s %s:%d -> %s:%d  thr=%s  bytes=%d  dur=%.3fs\n",
 			list[i].k.Proto, list[i].k.Src, list[i].k.Sp, list[i].k.Dst, list[i].k.Dp,
 			humanBps(thr), v.Bytes, d)
+	}
+
+	//
+
+	if len(flows) > 0 {
+		var sumThr, maxThr float64
+		var n int
+		for _, v := range flows {
+			d := v.Last.Sub(v.First).Seconds()
+			if d <= 0 {
+				continue
+			}
+			thr := (float64(v.Bytes) * 8.0) / d
+			sumThr += thr
+			if thr > maxThr {
+				maxThr = thr
+			}
+			n++
+		}
+		if n > 0 {
+			fmt.Println("\n=== FLOWS OVERALL ===")
+			fmt.Printf("Avg throughput (mean per-flow): %s\n", humanBps(sumThr/float64(n)))
+			fmt.Printf("Max throughput (per-flow):      %s\n", humanBps(maxThr))
+		}
 	}
 }
