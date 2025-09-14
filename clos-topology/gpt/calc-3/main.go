@@ -533,11 +533,22 @@ func main() {
 
 	/* ---------- FLOWS (throughput per flow) ---------- */
 
+	var ff []string
 	if a.FlowsGlob == "" {
-		fmt.Println("[NOTE] --flows-glob not set, skipping flows.")
-		return
+		fmt.Println("[INFO] --flows-glob не задан: берём те же файлы, что и для каналов.")
+		ff = append(ff, files...) // files — это список из --glob
+	} else {
+		var err error
+		ff, err = filepath.Glob(a.FlowsGlob)
+		if err != nil {
+			log.Fatalf("[ERROR] flows-glob: %v", err)
+		}
+		if len(ff) == 0 {
+			log.Fatalf("[ERROR] flows-glob matched 0 files: %s", a.FlowsGlob)
+		}
 	}
-	ff, err := filepath.Glob(a.FlowsGlob)
+	sort.Strings(ff)
+	fmt.Printf("[INFO] flows: %d files\n", len(ff))
 	if err != nil {
 		log.Fatalf("[ERROR] flows-glob: %v", err)
 	}
