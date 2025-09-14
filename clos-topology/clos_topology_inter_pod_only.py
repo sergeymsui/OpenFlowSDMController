@@ -86,7 +86,7 @@ class ClosTopology(Topo):
                     host = self.addHost(host_name, mac=mac)
                     print(mac, host)
                     # Хост‑edge link
-                    self.addLink(host, sw)
+                    self.addLink(host, sw, bw=host_bw)
 
             # Aggregation‑коммутаторы в текущем поде
             pod_aggs = []
@@ -100,7 +100,7 @@ class ClosTopology(Topo):
                 # Подключаем каждый edge‑коммутатор из этого пода к текущему aggregation‑коммутатору
                 for edge_sw in pod_edges:
                     # Указываем пропускную способность на линке edge‑→‑aggregation
-                    self.addLink(edge_sw, sw)
+                    self.addLink(edge_sw, sw, bw=core_bw)
 
         # Core‑коммутаторы: их число (k/2)^2
         num_core = (k // 2) ** 2
@@ -115,7 +115,7 @@ class ClosTopology(Topo):
         for agg_sw in agg_switches:
             for core_sw in core_switches:
                 # Указываем пропускную способность на линке aggregation‑→‑core
-                self.addLink(agg_sw, core_sw)
+                self.addLink(agg_sw, core_sw, bw=agg_bw)
 
 
 def run_test():
@@ -149,6 +149,20 @@ def run_test():
     # но мы уже передали MAC‑адреса хостам, поэтому оставляем значение по умолчанию False.
     net = Mininet(topo=topo, switch=OVSSwitch, controller=controller, link=TCLink)
     net.start()
+
+    sleep(3)
+
+    # тюнинг r2q и offload'ов
+    for sw in net.switches:
+        for intf in sw.intfList():
+            name = str(intf)
+            if "eth" in name:
+                sw.cmd(
+                    f"tc qdisc change dev {name} root handle 1: htb r2q 2000 >/dev/null 2>&1 || true"
+                )
+                sw.cmd(
+                    f"ethtool -K {name} gro off gso off tso off lro off >/dev/null 2>&1 || true"
+                )
 
     # Небольшая пауза, чтобы коммутаторы установили соединение с контроллером
     sleep(5)
