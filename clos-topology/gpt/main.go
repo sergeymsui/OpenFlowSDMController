@@ -1,7 +1,7 @@
 // pcap_summary.go
-// Пересбор Python-скрипта на Go.
+// Многопоточная версия с расчётом среднего и пикового MLU.
 // Требуются: tshark в PATH.
-// go build -o pcap_summary && ./pcap_summary --glob "/tmp/*.pcap" --capacity-mbps 500
+// go build -o pcap_summary && ./pcap_summary --glob "/tmp/*.pcap" --capacity-mbps 500 --jobs 4
 
 package main
 
@@ -16,9 +16,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 type Flow struct {
@@ -32,13 +34,29 @@ type Flow struct {
 	File     string
 }
 
-func runCmd(cmd []string) string {
+type metricResult struct {
+	File    string
+	AvgBps  float64
+	PeakBps float64
+	MLUAvg  float64
+	MLUPeak float64
+	Nbins   int
+	Err     error
+}
+
+type flowResult struct {
+	File  string
+	Flows []Flow
+	Err   error
+}
+
+func runCmd(cmd []string) (string, error) {
 	c := exec.Command(cmd[0], cmd[1:]...)
 	out, err := c.CombinedOutput()
 	if err != nil {
-		log.Fatalf("[ERROR] %s\n%s", strings.Join(cmd, " "), string(out))
+		return "", fmt.Errorf("[ERROR] %s\n%s", strings.Join(cmd, " "), string(out))
 	}
-	return string(out)
+	return string(out), nil
 }
 
 // Разбор "tshark -q -z io,stat,<bin>" для колонок Frames | Bytes
@@ -52,7 +70,6 @@ func parseIoStat(text string, binSec float64) []float64 {
 			parts := strings.Split(line, "|")
 			if len(parts) >= 3 {
 				p := strings.TrimSpace(parts[2])
-				// иногда в таблицах бывают пробелы, запятые — чистим
 				p = strings.ReplaceAll(p, ",", "")
 				if _, err := strconv.Atoi(p); err == nil {
 					bytesVal, _ := strconv.ParseInt(p, 10, 64)
@@ -104,46 +121,77 @@ func humanBps(bps float64) string {
 	return fmt.Sprintf("%.2f %s", v, units[i])
 }
 
-func fileMetrics(pcap string, capMbps float64, binSec float64) (avgBps, peakBps, mlu float64, nBins int) {
-	// tshark -r <pcap> -q -z io,stat,<bin>
+// Считает метрики по одному файлу.
+func fileMetrics(pcap string, capMbps, binSec float64) (avgBps, peakBps, mluAvg, mluPeak float64, nBins int, err error) {
 	binStr := fmt.Sprintf("%.6g", binSec)
-	out := runCmd([]string{"tshark", "-r", pcap, "-q", "-z", "io,stat," + binStr})
+	out, e := runCmd([]string{"tshark", "-r", pcap, "-q", "-z", "io,stat," + binStr})
+	if e != nil {
+		return 0, 0, 0, 0, 0, e
+	}
 	series := parseIoStat(out, binSec)
 	capBps := capMbps * 1_000_000.0
-	if len(series) > 0 {
-		var sum float64
-		peak := series[0]
-		for _, v := range series {
-			sum += v
-			if v > peak {
-				peak = v
-			}
-		}
-		avg := sum / float64(len(series))
-		var m float64
-		if capBps > 0 {
-			m = peak / capBps
-		}
-		return avg, peak, m, len(series)
+	if len(series) == 0 || capBps <= 0 {
+		return 0, 0, 0, 0, len(series), nil
 	}
-	return 0, 0, 0, 0
+	var sum float64
+	peak := series[0]
+	for _, v := range series {
+		sum += v
+		if v > peak {
+			peak = v
+		}
+	}
+	avg := sum / float64(len(series))
+	return avg, peak, avg / capBps, peak / capBps, len(series), nil
 }
 
-func flowsFromFiles(files []string, tcpPort int) []Flow {
-	var all []Flow
-	for _, f := range files {
-		cmd := []string{"tshark", "-r", f, "-q", "-z", "conv,tcp"}
-		if tcpPort > 0 {
-			cmd = []string{"tshark", "-r", f, "-Y", fmt.Sprintf("tcp.port==%d", tcpPort), "-q", "-z", "conv,tcp"}
+func flowsFromFiles(files []string, tcpPort, jobs int) ([]Flow, error) {
+	in := make(chan string)
+	out := make(chan flowResult)
+	var wg sync.WaitGroup
+
+	worker := func() {
+		defer wg.Done()
+		for f := range in {
+			cmd := []string{"tshark", "-r", f, "-q", "-z", "conv,tcp"}
+			if tcpPort > 0 {
+				cmd = []string{"tshark", "-r", f, "-Y", fmt.Sprintf("tcp.port==%d", tcpPort), "-q", "-z", "conv,tcp"}
+			}
+			txt, err := runCmd(cmd)
+			if err != nil {
+				out <- flowResult{File: f, Err: err}
+				continue
+			}
+			flows := parseConvTCP(txt)
+			for i := range flows {
+				flows[i].File = f
+			}
+			out <- flowResult{File: f, Flows: flows}
 		}
-		out := runCmd(cmd)
-		flows := parseConvTCP(out)
-		for i := range flows {
-			flows[i].File = f
-		}
-		all = append(all, flows...)
 	}
-	return all
+
+	for i := 0; i < jobs; i++ {
+		wg.Add(1)
+		go worker()
+	}
+
+	go func() {
+		for _, f := range files {
+			in <- f
+		}
+		close(in)
+		wg.Wait()
+		close(out)
+	}()
+
+	var all []Flow
+	for r := range out {
+		if r.Err != nil {
+			return nil, r.Err
+		}
+		all = append(all, r.Flows...)
+	}
+	return all, nil
 }
 
 func jain(values []float64) float64 {
@@ -198,7 +246,7 @@ func pPercentile(xs []float64, p float64) float64 {
 	return s[rank-1]
 }
 
-func writePerFileCSV(path string, rows [][5]interface{}) error {
+func writePerFileCSV(path string, rows []metricResult) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
@@ -206,14 +254,15 @@ func writePerFileCSV(path string, rows [][5]interface{}) error {
 	defer f.Close()
 	w := csv.NewWriter(f)
 	defer w.Flush()
-	_ = w.Write([]string{"file", "avg_bps", "peak_bps", "MLU", "time_bins"})
+	_ = w.Write([]string{"file", "avg_bps", "peak_bps", "MLU_avg", "MLU_peak", "time_bins"})
 	for _, r := range rows {
 		rec := []string{
-			fmt.Sprintf("%v", r[0]),
-			fmt.Sprintf("%.3f", r[1]),
-			fmt.Sprintf("%.3f", r[2]),
-			fmt.Sprintf("%.6f", r[3]),
-			fmt.Sprintf("%v", r[4]),
+			r.File,
+			fmt.Sprintf("%.3f", r.AvgBps),
+			fmt.Sprintf("%.3f", r.PeakBps),
+			fmt.Sprintf("%.6f", r.MLUAvg),
+			fmt.Sprintf("%.6f", r.MLUPeak),
+			fmt.Sprintf("%d", r.Nbins),
 		}
 		if err := w.Write(rec); err != nil {
 			return err
@@ -262,6 +311,7 @@ func main() {
 		tcpPort      int
 		outCSV       string
 		outFlows     string
+		jobs         int
 	)
 	flag.StringVar(&globPat, "glob", "", "Glob для PCAP (напр. '/tmp/*.pcap') [required]")
 	flag.Float64Var(&capacityMbps, "capacity-mbps", 0, "Пропускная способность линка (Mbps) для MLU [required]")
@@ -270,6 +320,7 @@ func main() {
 	flag.IntVar(&tcpPort, "tcp-port", 0, "Необязательный фильтр tcp.port (например, 5201 для iperf3)")
 	flag.StringVar(&outCSV, "out-csv", "./pcap_summary.csv", "CSV c метриками по файлам")
 	flag.StringVar(&outFlows, "out-flows", "./flows_summary.csv", "CSV c метриками по потокам (если задан --flows-glob)")
+	flag.IntVar(&jobs, "jobs", runtime.NumCPU(), "Число параллельных задач (tshark процессов)")
 	flag.Parse()
 
 	if globPat == "" || capacityMbps <= 0 {
@@ -287,29 +338,78 @@ func main() {
 	}
 	fmt.Printf("[INFO] matched %d files for interface metrics\n", len(files))
 
-	var rows [][5]interface{}
-	var totalAvg, totalPeak, networkMLU float64
-	for _, f := range files {
-		avg, peak, mlu, nBins := fileMetrics(f, capacityMbps, binSec)
-		rows = append(rows, [5]interface{}{f, avg, peak, mlu, nBins})
-		totalAvg += avg
-		totalPeak += peak
-		if mlu > networkMLU {
-			networkMLU = mlu
+	// --- Параллельная обработка интерфейсных pcap ---
+	in := make(chan string)
+	out := make(chan metricResult)
+	var wg sync.WaitGroup
+
+	worker := func() {
+		defer wg.Done()
+		for f := range in {
+			avg, peak, mluAvg, mluPeak, nBins, e := fileMetrics(f, capacityMbps, binSec)
+			out <- metricResult{
+				File:    f,
+				AvgBps:  avg,
+				PeakBps: peak,
+				MLUAvg:  mluAvg,
+				MLUPeak: mluPeak,
+				Nbins:   nBins,
+				Err:     e,
+			}
 		}
 	}
 
+	for i := 0; i < jobs; i++ {
+		wg.Add(1)
+		go worker()
+	}
+
+	go func() {
+		for _, f := range files {
+			in <- f
+		}
+		close(in)
+		wg.Wait()
+		close(out)
+	}()
+
+	var (
+		rows              []metricResult
+		totalAvg, totalPk float64
+		networkMLUAvg     float64
+		networkMLUPeak    float64
+	)
+	for r := range out {
+		if r.Err != nil {
+			log.Fatalf("%v", r.Err)
+		}
+		rows = append(rows, r)
+		totalAvg += r.AvgBps
+		totalPk += r.PeakBps
+		if r.MLUPeak > networkMLUPeak {
+			networkMLUPeak = r.MLUPeak
+		}
+		networkMLUAvg += r.MLUAvg
+	}
+	// Средний MLU по сети — среднее из per-file MLU_avg
+	if len(rows) > 0 {
+		networkMLUAvg /= float64(len(rows))
+	}
+
+	// Запись CSV по файлам
 	if err := writePerFileCSV(outCSV, rows); err != nil {
 		log.Fatalf("[ERROR] write CSV: %v", err)
 	}
 
 	fmt.Println("\n=== NETWORK SUMMARY (from interface pcaps) ===")
-	fmt.Printf("Files:                %d\n", len(files))
-	fmt.Printf("Total avg throughput: %s\n", humanBps(totalAvg))
-	fmt.Printf("Total peak throughput:%s\n", humanBps(totalPeak))
-	fmt.Printf("Network MLU (max):    %.2f%%\n", networkMLU*100.0)
-	fmt.Printf("Per-file CSV:         %s\n", outCSV)
+	fmt.Printf("Files:                 %d\n", len(rows))
+	fmt.Printf("Total avg throughput:  %s\n", humanBps(totalAvg))
+	fmt.Printf("Total peak throughput: %s\n", humanBps(totalPk))
+	fmt.Printf("Network MLU avg:       %.2f%%\n", networkMLUAvg*100.0)
+	fmt.Printf("Network MLU peak:      %.2f%%\n", networkMLUPeak*100.0)
+	fmt.Printf("Per-file CSV:          %s\n", outCSV)
 
+	// --- Поточные метрики (опционально), тоже параллельно ---
 	if flowsGlob != "" {
 		ffiles, err := filepath.Glob(flowsGlob)
 		if err != nil {
@@ -319,8 +419,11 @@ func main() {
 		if len(ffiles) == 0 {
 			fmt.Printf("\n[WARN] flows-glob matched 0 files: %s\n", flowsGlob)
 		} else {
-			fmt.Printf("\n[INFO] computing flows from %d files (flows-glob)\n", len(ffiles))
-			all := flowsFromFiles(ffiles, tcpPort)
+			fmt.Printf("\n[INFO] computing flows from %d files (flows-glob) with %d jobs\n", len(ffiles), jobs)
+			all, err := flowsFromFiles(ffiles, tcpPort, jobs)
+			if err != nil {
+				log.Fatalf("[ERROR] flows: %v", err)
+			}
 
 			// Дедуп по (src,sp,dst,dp) — берём запись с макс bytes
 			type key struct {
@@ -352,15 +455,15 @@ func main() {
 			fair := jain(perFlowThr)
 
 			fmt.Println("\n=== FLOW SUMMARY (from flows-glob) ===")
-			fmt.Printf("Flows (uniq):         %d\n", len(uniq))
-			fmt.Printf("FCT median:           %.3f s\n", fctMedian)
-			fmt.Printf("FCT p95:              %.3f s\n", fctP95)
-			fmt.Printf("Fairness (Jain):      %.4f\n", fair)
+			fmt.Printf("Flows (uniq):          %d\n", len(uniq))
+			fmt.Printf("FCT median:            %.3f s\n", fctMedian)
+			fmt.Printf("FCT p95:               %.3f s\n", fctP95)
+			fmt.Printf("Fairness (Jain):       %.4f\n", fair)
 
 			if err := writePerFlowCSV(outFlows, uniq); err != nil {
 				log.Fatalf("[ERROR] write flow CSV: %v", err)
 			}
-			fmt.Printf("Per-flow CSV:         %s\n", outFlows)
+			fmt.Printf("Per-flow CSV:          %s\n", outFlows)
 		}
 	} else {
 		fmt.Println("\n[NOTE] Flows/FCT/Fairness не считались (не задан --flows-glob). " +
