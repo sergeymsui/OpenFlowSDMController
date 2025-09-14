@@ -361,10 +361,10 @@ class Controller(OSKenApp):
             ("h1_1_1", "h3_1_1", 1),
         ]
 
-        # demands = set()
-        # for (src, dst, v) in map_list:
-        #     demands.add((src, dst, v))
-        #     demands.add((dst, src, v))
+        demands = set()
+        for (src, dst, v) in map_list:
+            demands.add((src, dst, v))
+            demands.add((dst, src, v))
 
         flows = generate_adaptive_shortest_paths(self.topo, list(demands))
         # flows = generate_ilp_flows(self.topo, demands)
