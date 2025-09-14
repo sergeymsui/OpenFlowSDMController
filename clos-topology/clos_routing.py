@@ -366,13 +366,13 @@ class Controller(OSKenApp):
             demands.add((src, dst, v))
             demands.add((dst, src, v))
 
-        flows = generate_adaptive_shortest_paths(self.topo, list(demands))
+        # flows = generate_adaptive_shortest_paths(self.topo, list(demands))
         # flows = generate_ilp_flows(self.topo, demands)
         # flows = generate_greedy_flows(self.topo, demands)
         # flows = generate_msa_flows(self.topo, demands)
 
         # flows = generate_fwa_flows(self.topo, demands)
-        # flows = generate_ustm_flows(self.topo, demands)
+        flows = generate_ustm_flows(self.topo, demands)
 
         # flows = generate_ospf_like_paths(self.topo, demands)
         # flows = generate_load_aware_paths(self.topo, demands)
