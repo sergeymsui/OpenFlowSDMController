@@ -8,7 +8,7 @@
 CORES="s17 s18 s19 s20"
 
 # Папка для логов
-OUTDIR="/tmp"
+OUTDIR="/home/vda/tmp/"
 mkdir -p "$OUTDIR"
 
 # Время захвата (секунд)

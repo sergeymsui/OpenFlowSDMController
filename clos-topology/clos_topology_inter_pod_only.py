@@ -90,7 +90,7 @@ class ClosTopology(Topo):
                     host = self.addHost(host_name, mac=mac)
                     print(mac, host)
                     # Хост‑edge link
-                    self.addLink(host, sw, bw=host_bw)
+                    self.addLink(host, sw)
 
             # Aggregation‑коммутаторы в текущем поде
             pod_aggs = []
@@ -104,7 +104,7 @@ class ClosTopology(Topo):
                 # Подключаем каждый edge‑коммутатор из этого пода к текущему aggregation‑коммутатору
                 for edge_sw in pod_edges:
                     # Указываем пропускную способность на линке edge‑→‑aggregation
-                    self.addLink(edge_sw, sw, bw=agg_bw)
+                    self.addLink(edge_sw, sw)
 
         # Core‑коммутаторы: их число (k/2)^2
         num_core = (k // 2) ** 2
@@ -119,7 +119,7 @@ class ClosTopology(Topo):
         for agg_sw in agg_switches:
             for core_sw in core_switches:
                 # Указываем пропускную способность на линке aggregation‑→‑core
-                self.addLink(agg_sw, core_sw, bw=core_bw)
+                self.addLink(agg_sw, core_sw)
 
 
 def run_test():
@@ -187,7 +187,7 @@ def run_test():
     # чтобы при достаточном количестве потоков перегрузить core‑уровень.
     for src_host, dst_host in demands:
         dst_ip = dst_host.IP()
-        cmd = f"iperf -c {dst_ip} -b 100M -t 6000 -i 1 > /tmp/iperf_client_{src_host.name}_to_{dst_host.name}.log &"
+        cmd = f"iperf -c {dst_ip} -t 6000 -P 2 > /tmp/iperf_client_{src_host.name}_to_{dst_host.name}.log &"
         print(cmd, f"between: {src_host} -> {dst_host}")
         src_host.cmd(cmd)
 
