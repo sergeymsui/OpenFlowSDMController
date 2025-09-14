@@ -1,25 +1,17 @@
-// pcap_summary_fast.go (robust)
+// pcap_summary_fast.go (portable, libpcap-based)
 // go: 1.21+
-// deps: github.com/google/gopacket v1
+// deps: github.com/google/gopacket v1  (+ system libpcap)
 //
 // Пример:
 //   go mod init pcapfast
 //   go get github.com/google/gopacket@latest
+//   sudo apt-get install -y libpcap-dev
 //   go build -o pcap_summary_fast pcap_summary_fast.go
-//   ./pcap_summary_fast \
-//     --glob "/home/user/pcaps/*.pcap" \
-//     --capacity-mbps 500 \
-//     --bin 1 \
-//     --jobs 6 \
-//     --flows-glob "/home/user/pcaps/hosts_rx/*.pcap" \
-//     --tcp-port 5201 \
-//     --skip-bad
+//   ./pcap_summary_fast --glob "/home/vda/tmp/ospf-1/*.pcap" --capacity-mbps 100 --bin 1 --jobs 6
 
 package main
 
 import (
-	"bufio"
-	"compress/gzip"
 	"encoding/csv"
 	"flag"
 	"fmt"
@@ -31,14 +23,12 @@ import (
 	"runtime"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
-	"github.com/google/gopacket/pcapgo"
 )
 
 type argsT struct {
@@ -78,8 +68,6 @@ func parseFlags() argsT {
 	return a
 }
 
-// ---------- Метрики / потоки ----------
-
 type metricResult struct {
 	File            string
 	AvgBps, PeakBps float64
@@ -105,8 +93,6 @@ type flowRow struct {
 	Duration float64
 	ThrBps   float64
 }
-
-// ---------- Утилиты ----------
 
 func humanBps(bps float64) string {
 	u := []string{"bps", "Kbps", "Mbps", "Gbps", "Tbps"}
@@ -166,81 +152,32 @@ func safeDiv(a, b float64) float64 {
 	return a / b
 }
 
-// ---------- Открытие PCAP/PCAPNG (+.gz) ----------
-
+// --- открытие через libpcap (читает pcap/pcapng/SLL/SLL2) ---
 type opener struct {
-	path   string
-	file   *os.File
-	reader gopacket.PacketDataSource
-	lt     layers.LinkType         // для pcap/pcap fallback
-	ng     *pcapgo.NgReader        // для pcapng
-	ifLT   map[int]layers.LinkType // pcapng: ifaceIndex -> LT
+	handle *pcap.Handle
 	close  func() error
-}
-
-func (o *opener) Close() {
-	if o.close != nil {
-		_ = o.close()
-	}
+	lt     layers.LinkType
 }
 
 func openAny(path string) (*opener, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-
-	// поддержка .gz
-	var rd *bufio.Reader
-	var closer func() error
-	if strings.HasSuffix(strings.ToLower(path), ".gz") {
-		gr, e := gzip.NewReader(f)
-		if e != nil {
-			_ = f.Close()
-			return nil, fmt.Errorf("gzip open failed: %w", e)
-		}
-		rd = bufio.NewReader(gr)
-		closer = func() error { _ = gr.Close(); return f.Close() }
-	} else {
-		rd = bufio.NewReader(f)
-		closer = f.Close
-	}
-
-	// 1) PCAPNG (pure Go)
-	if ng, e := pcapgo.NewNgReader(rd, pcapgo.DefaultNgReaderOptions); e == nil {
-		ifLT := map[int]layers.LinkType{}
-		for i, ifc := range ng.Interfaces() {
-			ifLT[i] = ifc.LinkType
-		}
-		return &opener{path: path, file: f, reader: ng, ng: ng, ifLT: ifLT, close: closer}, nil
-	}
-	// 2) PCAP (pure Go)
-	if pr, e := pcapgo.NewReader(rd); e == nil {
-		lt := pr.LinkType()
-		return &opener{path: path, file: f, reader: pr, lt: lt, close: closer}, nil
-	}
-
-	// 3) Фолбэк на libpcap (понимает SLL/SLL2 и многие экзотики)
-	_ = f.Close() // откроем заново обычным способом
+	// libpcap сам определит формат
 	h, err := pcap.OpenOffline(path)
 	if err != nil {
-		return nil, fmt.Errorf("unsupported/failed pcap reader for %s", path)
+		return nil, fmt.Errorf("unsupported/failed pcap reader for %s: %w", path, err)
 	}
 	return &opener{
-		path:   path,
-		reader: h,
+		handle: h,
 		lt:     layers.LinkType(h.LinkType()),
-		close:  h.Close,
+		close:  func() error { h.Close(); return nil },
 	}, nil
 }
 
-// ---------- Сканирование файла ----------
-
+// --- сканирование файла ---
 type scanOpts struct {
 	BinSec       float64
 	CapBps       float64
 	CollectFlows bool
-	TCPPort      int // 0=выкл
+	TCPPort      int
 	SkipBad      bool
 }
 type scanOut struct {
@@ -258,7 +195,7 @@ func scanFile(path string, o scanOpts) scanOut {
 		}
 		return scanOut{Err: err}
 	}
-	defer op.Close()
+	defer op.close()
 
 	bin := o.BinSec
 	capBps := o.CapBps
@@ -272,78 +209,28 @@ func scanFile(path string, o scanOpts) scanOut {
 		flows = make(map[flowKey]flowAgg, 1024)
 	}
 
-	switch r := op.reader.(type) {
-	case *pcapgo.NgReader:
-		for {
-			data, ci, e := r.ReadPacketData()
-			if e != nil {
-				break
-			}
-			if start.IsZero() {
-				start = ci.Timestamp
-			}
-			wire := int64(ci.Length) // on-the-wire length
-			dt := ci.Timestamp.Sub(start).Seconds()
-			if dt < 0 {
-				continue
-			}
-			idx := int64(dt / bin)
-			bins[idx] += wire
-			if idx > lastBin {
-				lastBin = idx
-			}
-			if o.CollectFlows {
-				lt := op.ifLT[ci.InterfaceIndex]
-				parseFlow(data, lt, ci.Timestamp, int(ci.Length), flows, o.TCPPort)
-			}
+	for {
+		data, ci, e := op.handle.ReadPacketData()
+		if e != nil {
+			break
 		}
-	case *pcapgo.Reader:
-		ps := gopacket.NewPacketSource(r, op.lt)
-		ps.Lazy, ps.NoCopy = true, true
-		for pkt := range ps.Packets() {
-			ci := pkt.Metadata().CaptureInfo
-			if start.IsZero() {
-				start = ci.Timestamp
-			}
-			wire := int64(ci.Length)
-			dt := ci.Timestamp.Sub(start).Seconds()
-			if dt < 0 {
-				continue
-			}
-			idx := int64(dt / bin)
-			bins[idx] += wire
-			if idx > lastBin {
-				lastBin = idx
-			}
-			if o.CollectFlows {
-				extractFlow(pkt, flows, o.TCPPort)
-			}
+		if start.IsZero() {
+			start = ci.Timestamp
 		}
-	case *pcap.Handle:
-		for {
-			data, ci, e := r.ReadPacketData()
-			if e != nil {
-				break
-			}
-			if start.IsZero() {
-				start = ci.Timestamp
-			}
-			wire := int64(ci.Length)
-			dt := ci.Timestamp.Sub(start).Seconds()
-			if dt < 0 {
-				continue
-			}
-			idx := int64(dt / bin)
-			bins[idx] += wire
-			if idx > lastBin {
-				lastBin = idx
-			}
-			if o.CollectFlows {
-				parseFlow(data, layers.LinkType(r.LinkType()), ci.Timestamp, int(ci.Length), flows, o.TCPPort)
-			}
+		wire := int64(ci.Length) // on-the-wire length
+		dt := ci.Timestamp.Sub(start).Seconds()
+		if dt < 0 {
+			continue
 		}
-	default:
-		return scanOut{Err: fmt.Errorf("unknown reader type")}
+		idx := int64(dt / bin)
+		bins[idx] += wire
+		if idx > lastBin {
+			lastBin = idx
+		}
+
+		if o.CollectFlows {
+			parseFlow(data, op.lt, ci.Timestamp, int(ci.Length), flows, o.TCPPort)
+		}
 	}
 
 	// агрегаты
@@ -374,7 +261,7 @@ func scanFile(path string, o scanOpts) scanOut {
 	return scanOut{M: m, Flows: flows}
 }
 
-// parseFlow: быстрый парс сырых данных (по linktype), учитывает wireLen
+// дешёвый парс для TCP-потоков
 func parseFlow(data []byte, lt layers.LinkType, ts time.Time, wireLen int, flows map[flowKey]flowAgg, tcpPort int) {
 	pkt := gopacket.NewPacket(data, lt, gopacket.DecodeOptions{Lazy: true, NoCopy: true})
 	netL := pkt.NetworkLayer()
@@ -412,46 +299,7 @@ func parseFlow(data []byte, lt layers.LinkType, ts time.Time, wireLen int, flows
 	flows[key] = agg
 }
 
-// extractFlow: если уже собран Packet
-func extractFlow(pkt gopacket.Packet, flows map[flowKey]flowAgg, tcpPort int) {
-	netL := pkt.NetworkLayer()
-	trL := pkt.TransportLayer()
-	if netL == nil || trL == nil {
-		return
-	}
-
-	var srcIP, dstIP net.IP
-	switch ly := netL.(type) {
-	case *layers.IPv4:
-		srcIP, dstIP = ly.SrcIP, ly.DstIP
-	case *layers.IPv6:
-		srcIP, dstIP = ly.SrcIP, ly.DstIP
-	default:
-		return
-	}
-	tcp, ok := trL.(*layers.TCP)
-	if !ok {
-		return
-	}
-	if tcpPort > 0 && !(int(tcp.SrcPort) == tcpPort || int(tcp.DstPort) == tcpPort) {
-		return
-	}
-	ci := pkt.Metadata().CaptureInfo
-	key := flowKey{Src: srcIP.String(), Dst: dstIP.String(), Sp: uint16(tcp.SrcPort), Dp: uint16(tcp.DstPort)}
-	agg := flows[key]
-	agg.Packets++
-	agg.Bytes += int64(ci.Length) // on-the-wire length
-	if agg.First.IsZero() || ci.Timestamp.Before(agg.First) {
-		agg.First = ci.Timestamp
-	}
-	if ci.Timestamp.After(agg.Last) {
-		agg.Last = ci.Timestamp
-	}
-	flows[key] = agg
-}
-
-// ---------- Конвейер по файлам ----------
-
+// --- CSV helpers ---
 func writePerFileCSV(path string, rows []metricResult) error {
 	f, err := os.Create(path)
 	if err != nil {
