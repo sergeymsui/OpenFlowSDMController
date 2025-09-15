@@ -1,0 +1,216 @@
+go run .  --glob "/home/vda/tmp-3/asp-3/*.pcap" --capacity-mbps 100 --bin 1
+[INFO] channels: 32 files
+Channels CSV: ./channels_summary.csv
+
+=== CHANNELS OVERALL ===
+Avg throughput (mean of per-channel avg): 76.57 Mbps
+Max throughput (max per-channel peak):   329.21 Mbps
+Avg MLU (mean of MLU_avg):               76.57%
+Max MLU (max of MLU_peak):               329.21%
+[INFO] --flows-glob не задан: берём те же файлы, что и для каналов.
+[INFO] flows: 32 files
+[INFO] flows: 32 files
+Flows CSV:    ./flows_summary.csv
+
+Top flows by throughput:
+  tcp 10.0.0.1:50756 -> 10.0.0.10:5001  thr=37.56 Mbps  bytes=1408382752  dur=299.985s
+  tcp 10.0.0.2:44056 -> 10.0.0.10:5001  thr=36.49 Mbps  bytes=1368280154  dur=299.991s
+  tcp 10.0.0.1:56796 -> 10.0.0.11:5001  thr=33.22 Mbps  bytes=1245647206  dur=299.949s
+  tcp 10.0.0.8:33548 -> 10.0.0.11:5001  thr=31.35 Mbps  bytes=1175761428  dur=299.995s
+  tcp 10.0.0.1:52034 -> 10.0.0.12:5001  thr=28.68 Mbps  bytes=1075588534  dur=300.006s
+
+=== FLOWS OVERALL ===
+Avg throughput (mean per-flow): 4.77 Mbps
+Max throughput (per-flow):      37.56 Mbps
+
+==
+
+go run .  --glob "/home/vda/tmp-3/ilp-3/*.pcap" --capacity-mbps 100 --bin 1
+[INFO] channels: 32 files
+Channels CSV: ./channels_summary.csv
+
+=== CHANNELS OVERALL ===
+Avg throughput (mean of per-channel avg): 65.91 Mbps
+Max throughput (max per-channel peak):   313.53 Mbps
+Avg MLU (mean of MLU_avg):               65.91%
+Max MLU (max of MLU_peak):               313.53%
+[INFO] --flows-glob не задан: берём те же файлы, что и для каналов.
+[INFO] flows: 32 files
+[INFO] flows: 32 files
+Flows CSV:    ./flows_summary.csv
+
+Top flows by throughput:
+  tcp 10.0.0.7:35454 -> 10.0.0.13:5001  thr=39.08 Mbps  bytes=1465478554  dur=299.962s
+  tcp 10.0.0.7:35450 -> 10.0.0.13:5001  thr=38.14 Mbps  bytes=1430016396  dur=299.952s
+  tcp 10.0.0.8:58328 -> 10.0.0.13:5001  thr=32.42 Mbps  bytes=1215649014  dur=299.963s
+  tcp 10.0.0.8:58324 -> 10.0.0.13:5001  thr=32.28 Mbps  bytes=1210429322  dur=299.959s
+  tcp 10.0.0.6:50150 -> 10.0.0.12:5001  thr=23.04 Mbps  bytes=863910464  dur=299.904s
+
+=== FLOWS OVERALL ===
+Avg throughput (mean per-flow): 4.11 Mbps
+Max throughput (per-flow):      39.08 Mbps
+
+==
+
+go run .  --glob "/home/vda/tmp-3/grd-3/*.pcap" --capacity-mbps 100 --bin 1
+[INFO] channels: 32 files
+Channels CSV: ./channels_summary.csv
+
+=== CHANNELS OVERALL ===
+Avg throughput (mean of per-channel avg): 72.11 Mbps
+Max throughput (max per-channel peak):   409.55 Mbps
+Avg MLU (mean of MLU_avg):               72.11%
+Max MLU (max of MLU_peak):               409.55%
+[INFO] --flows-glob не задан: берём те же файлы, что и для каналов.
+[INFO] flows: 32 files
+[INFO] flows: 32 files
+Flows CSV:    ./flows_summary.csv
+
+Top flows by throughput:
+  tcp 10.0.0.7:57714 -> 10.0.0.15:5001  thr=23.85 Mbps  bytes=894324030  dur=299.997s
+  tcp 10.0.0.3:55942 -> 10.0.0.16:5001  thr=22.83 Mbps  bytes=856045494  dur=299.918s
+  tcp 10.0.0.3:40910 -> 10.0.0.10:5001  thr=18.41 Mbps  bytes=690224054  dur=299.936s
+  tcp 10.0.0.1:46862 -> 10.0.0.12:5001  thr=17.60 Mbps  bytes=659785872  dur=299.941s
+  tcp 10.0.0.4:42610 -> 10.0.0.10:5001  thr=17.32 Mbps  bytes=649405690  dur=299.961s
+
+=== FLOWS OVERALL ===
+Avg throughput (mean per-flow): 4.50 Mbps
+Max throughput (per-flow):      23.85 Mbps
+
+==
+
+go run .  --glob "/home/vda/tmp-3/msa-3/*.pcap" --capacity-mbps 100 --bin 1
+[INFO] channels: 32 files
+Channels CSV: ./channels_summary.csv
+
+=== CHANNELS OVERALL ===
+Avg throughput (mean of per-channel avg): 35.71 Mbps
+Max throughput (max per-channel peak):   377.25 Mbps
+Avg MLU (mean of MLU_avg):               35.71%
+Max MLU (max of MLU_peak):               377.25%
+[INFO] --flows-glob не задан: берём те же файлы, что и для каналов.
+[INFO] flows: 32 files
+[INFO] flows: 32 files
+Flows CSV:    ./flows_summary.csv
+
+Top flows by throughput:
+  tcp 10.0.0.3:52788 -> 10.0.0.9:5001  thr=18.67 Mbps  bytes=700105272  dur=299.963s
+  tcp 10.0.0.3:54320 -> 10.0.0.12:5001  thr=18.10 Mbps  bytes=678787166  dur=299.955s
+  tcp 10.0.0.3:35424 -> 10.0.0.11:5001  thr=18.02 Mbps  bytes=675548656  dur=299.949s
+  tcp 10.0.0.1:56826 -> 10.0.0.9:5001  thr=18.00 Mbps  bytes=674828976  dur=299.955s
+  tcp 10.0.0.1:57054 -> 10.0.0.10:5001  thr=17.76 Mbps  bytes=665710088  dur=299.952s
+
+=== FLOWS OVERALL ===
+Avg throughput (mean per-flow): 2.23 Mbps
+Max throughput (per-flow):      18.67 Mbps
+
+==
+
+go run .  --glob "/home/vda/tmp-3/fwa-3/*.pcap" --capacity-mbps 100 --bin 1
+[INFO] channels: 32 files
+Channels CSV: ./channels_summary.csv
+
+=== CHANNELS OVERALL ===
+Avg throughput (mean of per-channel avg): 74.03 Mbps
+Max throughput (max per-channel peak):   386.25 Mbps
+Avg MLU (mean of MLU_avg):               74.03%
+Max MLU (max of MLU_peak):               386.25%
+[INFO] --flows-glob не задан: берём те же файлы, что и для каналов.
+[INFO] flows: 32 files
+[INFO] flows: 32 files
+Flows CSV:    ./flows_summary.csv
+
+Top flows by throughput:
+  tcp 10.0.0.2:53616 -> 10.0.0.15:5001  thr=30.78 Mbps  bytes=1154130184  dur=299.971s
+  tcp 10.0.0.4:60536 -> 10.0.0.15:5001  thr=30.38 Mbps  bytes=1139250724  dur=299.976s
+  tcp 10.0.0.3:54960 -> 10.0.0.15:5001  thr=29.40 Mbps  bytes=1102516576  dur=299.981s
+  tcp 10.0.0.1:47376 -> 10.0.0.15:5001  thr=29.23 Mbps  bytes=1095804320  dur=299.952s
+  tcp 10.0.0.6:38262 -> 10.0.0.11:5001  thr=28.97 Mbps  bytes=1086259536  dur=299.977s
+
+=== FLOWS OVERALL ===
+Avg throughput (mean per-flow): 4.63 Mbps
+Max throughput (per-flow):      30.78 Mbps
+
+==
+
+go run .  --glob "/home/vda/tmp-3/ustm-3/*.pcap" --capacity-mbps 100 --bin 1
+[INFO] channels: 32 files
+Channels CSV: ./channels_summary.csv
+
+=== CHANNELS OVERALL ===
+Avg throughput (mean of per-channel avg): 100.30 Mbps
+Max throughput (max per-channel peak):   593.87 Mbps
+Avg MLU (mean of MLU_avg):               100.30%
+Max MLU (max of MLU_peak):               593.87%
+[INFO] --flows-glob не задан: берём те же файлы, что и для каналов.
+[INFO] flows: 32 files
+[INFO] flows: 32 files
+
+
+Flows CSV:    ./flows_summary.csv
+
+Top flows by throughput:
+  tcp 10.0.0.3:48128 -> 10.0.0.16:5001  thr=28.89 Mbps  bytes=1083108874  dur=299.944s
+  tcp 10.0.0.5:45806 -> 10.0.0.15:5001  thr=28.14 Mbps  bytes=1055207474  dur=299.960s
+  tcp 10.0.0.5:33378 -> 10.0.0.14:5001  thr=27.86 Mbps  bytes=1044680698  dur=299.943s
+  tcp 10.0.0.2:49464 -> 10.0.0.14:5001  thr=27.57 Mbps  bytes=1033929174  dur=299.965s
+  tcp 10.0.0.5:33390 -> 10.0.0.14:5001  thr=27.29 Mbps  bytes=1023007042  dur=299.937s
+
+=== FLOWS OVERALL ===
+Avg throughput (mean per-flow): 5.05 Mbps
+Max throughput (per-flow):      28.89 Mbps
+
+==
+
+go run .  --glob "/home/vda/tmp-3/ospf-3/*.pcap" --capacity-mbps 100 --bin 1
+[INFO] channels: 32 files
+Channels CSV: ./channels_summary.csv
+
+=== CHANNELS OVERALL ===
+Avg throughput (mean of per-channel avg): 44.25 Mbps
+Max throughput (max per-channel peak):   379.62 Mbps
+Avg MLU (mean of MLU_avg):               44.25%
+Max MLU (max of MLU_peak):               379.62%
+[INFO] --flows-glob не задан: берём те же файлы, что и для каналов.
+[INFO] flows: 32 files
+[INFO] flows: 32 files
+Flows CSV:    ./flows_summary.csv
+
+Top flows by throughput:
+  tcp 10.0.0.3:42094 -> 10.0.0.13:5001  thr=32.18 Mbps  bytes=1206772476  dur=299.964s
+  tcp 10.0.0.1:47152 -> 10.0.0.10:5001  thr=28.83 Mbps  bytes=1081161902  dur=299.993s
+  tcp 10.0.0.1:37172 -> 10.0.0.11:5001  thr=22.72 Mbps  bytes=852108112  dur=299.989s
+  tcp 10.0.0.3:47120 -> 10.0.0.12:5001  thr=22.65 Mbps  bytes=849491854  dur=299.986s
+  tcp 10.0.0.3:55220 -> 10.0.0.11:5001  thr=22.05 Mbps  bytes=826788236  dur=299.979s
+
+=== FLOWS OVERALL ===
+Avg throughput (mean per-flow): 2.77 Mbps
+Max throughput (per-flow):      32.18 Mbps
+
+==
+
+go run .  --glob "/home/vda/tmp-3/lap-3/*.pcap" --capacity-mbps 100 --bin 1
+[INFO] channels: 32 files
+Channels CSV: ./channels_summary.csv
+
+=== CHANNELS OVERALL ===
+Avg throughput (mean of per-channel avg): 74.75 Mbps
+Max throughput (max per-channel peak):   331.43 Mbps
+Avg MLU (mean of MLU_avg):               74.75%
+Max MLU (max of MLU_peak):               331.43%
+[INFO] --flows-glob не задан: берём те же файлы, что и для каналов.
+[INFO] flows: 32 files
+[INFO] flows: 32 files
+
+Flows CSV:    ./flows_summary.csv
+
+Top flows by throughput:
+  tcp 10.0.0.4:57916 -> 10.0.0.13:5001  thr=57.31 Mbps  bytes=2149075596  dur=299.979s
+  tcp 10.0.0.4:57914 -> 10.0.0.13:5001  thr=57.31 Mbps  bytes=2149078658  dur=299.991s
+  tcp 10.0.0.3:52034 -> 10.0.0.13:5001  thr=55.49 Mbps  bytes=2080743938  dur=299.985s
+  tcp 10.0.0.6:38902 -> 10.0.0.10:5001  thr=49.32 Mbps  bytes=1849155258  dur=299.952s
+  tcp 10.0.0.6:38886 -> 10.0.0.10:5001  thr=48.88 Mbps  bytes=1832567940  dur=299.951s
+
+=== FLOWS OVERALL ===
+Avg throughput (mean per-flow): 4.65 Mbps
+Max throughput (per-flow):      57.31 Mbps

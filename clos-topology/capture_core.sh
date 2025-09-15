@@ -8,11 +8,11 @@
 CORES="s17 s18 s19 s20"
 
 # Папка для логов
-OUTDIR="/home/vda/tmp/"
+OUTDIR="/home/vda/tmp-3/"
 mkdir -p "$OUTDIR"
 
 # Время захвата (секунд)
-DURATION=60
+DURATION=300
 
 # Узнаем список интерфейсов у каждого core-свитча
 for sw in $CORES; do
