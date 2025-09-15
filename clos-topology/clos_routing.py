@@ -373,7 +373,7 @@ class Controller(OSKenApp):
         # flows = generate_msa_flows(self.topo, demands)
 
         # flows = generate_fwa_flows(self.topo, demands)
-        flows = generate_ustm_flows(self.topo, demands)
+        # flows = generate_ustm_flows(self.topo, demands)
 
         # flows = generate_ospf_like_paths(self.topo, demands)
         # flows = generate_load_aware_paths(self.topo, demands)

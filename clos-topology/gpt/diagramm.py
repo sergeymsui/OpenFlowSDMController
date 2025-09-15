@@ -1,28 +1,31 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Построение одной диаграммы:
-– два столбца (Average/Peak Throughput)
-– линия MLU (%) на правой оси
+Clos Experiment (current): one figure
+– столбцы: Average Throughput (Mbps)
+– точки:  Peak Throughput (Mbps)
+– точки:  Avg MLU (%) на правой оси (без соединяющей линии)
 """
 
 import matplotlib.pyplot as plt
 import pandas as pd
 from textwrap import wrap
 
-# ---- Данные из эксперимента ----
+# ---- Данные из текущего эксперимента ----
+# ASP = Adaptive Shortest Paths, GRD = Greedy, FWA = Frank–Wolfe,
+# USTM, OSPF, LAP = Load Aware Paths, ILP, MSA
 data = [
-    ("ASP", 271.68, 320.34, 18.98),
-    ("ILP", 334.58, 405.36, 26.50),
-    ("GRD", 339.34, 397.32, 32.74),
-    ("MSA", 217.91, 224.30, 52.18),
-    ("FWA", 257.71, 278.18, 44.79),
-    ("USTM", 254.63, 303.26, 43.54),
-    ("OSPF", 233.03, 241.94, 44.78),
-    ("LAP", 192.67, 212.45, 29.74),
+    ("USTM", 100.30, 593.87, 100.30),
+    ("ASP",   76.57, 329.21,  76.57),
+    ("LAP",   74.75, 331.43,  74.75),
+    ("FWA",   74.03, 386.25,  74.03),
+    ("GRD",   72.11, 409.55,  72.11),
+    ("ILP",   65.91, 313.53,  65.91),
+    ("OSPF",  44.25, 379.62,  44.25),
+    ("MSA",   35.71, 377.25,  35.71),
 ]
 
-df = pd.DataFrame(data, columns=["algorithm", "avg", "peak", "mlu"])
+df = pd.DataFrame(data, columns=["algorithm", "avg", "peak", "mlu_avg"])
 df = df.sort_values(by="avg", ascending=False).reset_index(drop=True)
 
 x = range(len(df))
@@ -31,40 +34,31 @@ labels = ["\n".join(wrap(a, 20)) for a in df["algorithm"]]
 plt.figure(figsize=(12, 6))
 ax1 = plt.gca()
 
-bar_width = 0.38
-bars1 = ax1.bar(
-    [i - bar_width / 2 for i in x],
-    df["avg"],
-    width=bar_width,
-    color="#1f77b4",
-    label="Avg Throughput (Mbps)",
-)
-bars2 = ax1.bar(
-    [i + bar_width / 2 for i in x],
-    df["peak"],
-    width=bar_width,
-    color="#7f7f7f",
-    label="Peak Throughput (Mbps)",
-)
+# Столбцы: средняя пропускная способность
+bar_width = 0.55
+bars = ax1.bar(list(x), df["avg"], width=bar_width, label="Avg Throughput (Mbps)")
 
 ax1.set_ylabel("Throughput (Mbps)", fontsize=10)
-ax1.set_xticks(x)
+ax1.set_xticks(list(x))
 ax1.set_xticklabels(labels, fontsize=9)
-ax1.grid(axis="y", color="lightgray", linestyle=":", linewidth=0.5)
+ax1.grid(axis="y", linestyle=":", linewidth=0.5)
 
-# Линия MLU
+# Точки: пиковая пропускная способность (левая ось)
+ax1.scatter(list(x), df["peak"], marker="o", s=50, label="Peak Throughput (Mbps)", zorder=3)
+
+# Точки: Avg MLU (%) на правой оси (без линии)
 ax2 = ax1.twinx()
-ax2.plot(x, df["mlu"], marker="o", linewidth=2, color="#d62728", label="MLU (%)")
-ax2.set_ylabel("MLU (%)", fontsize=10)
+ax2.scatter(list(x), df["mlu_avg"], marker="D", s=45, label="Avg MLU (%)", zorder=3)
+ax2.set_ylabel("Avg MLU (%)", fontsize=10)
+ax2.set_ylim(0, max(110, int(df["mlu_avg"].max() * 1.1)))  # небольшой запас сверху
 
-plt.title("Clos Experiment: Throughput and MLU by Algorithm", fontsize=11)
+plt.title("Clos Experiment (Current): Throughput and Avg MLU by Algorithm", fontsize=11)
 
-handles1, labels1 = ax1.get_legend_handles_labels()
-handles2, labels2 = ax2.get_legend_handles_labels()
-ax1.legend(
-    handles1 + handles2, labels1 + labels2, loc="upper right", frameon=False, fontsize=9
-)
+# Совмещённая легенда
+h1, l1 = ax1.get_legend_handles_labels()
+h2, l2 = ax2.get_legend_handles_labels()
+ax1.legend(h1 + h2, l1 + l2, loc="upper right", frameon=False, fontsize=9)
 
 plt.tight_layout()
-plt.savefig("clos_one_figure_metrics_ieee.png", dpi=300)
+plt.savefig("clos_metrics_current_points.png", dpi=300)
 plt.show()
