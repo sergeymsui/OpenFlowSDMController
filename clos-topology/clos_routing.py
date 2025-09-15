@@ -376,7 +376,7 @@ class Controller(OSKenApp):
         # flows = generate_ustm_flows(self.topo, demands)
 
         # flows = generate_ospf_like_paths(self.topo, demands)
-        # flows = generate_load_aware_paths(self.topo, demands)
+        flows = generate_load_aware_paths(self.topo, demands)
 
         # Для каждого потока берем idx и его маршрут
         for idx, path in flows.items():

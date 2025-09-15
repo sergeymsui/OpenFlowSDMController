@@ -1,30 +1,222 @@
 Adaptive Shortest Paths
 
+[INFO] channels: 32 files
+Channels CSV: ./channels_summary.csv
+
+=== CHANNELS OVERALL ===
+Avg throughput (mean of per-channel avg): 97.99 Mbps
+Max throughput (max per-channel peak):   265.88 Mbps
+Avg MLU (mean of MLU_avg):               97.99%
+Max MLU (max of MLU_peak):               265.88%
+[INFO] --flows-glob не задан: берём те же файлы, что и для каналов.
+[INFO] flows: 32 files
+[INFO] flows: 32 files
+
+Flows CSV:    ./flows_summary.csv
+
+Top flows by throughput:
+  tcp 10.0.0.8:53690 -> 10.0.0.14:5001  thr=38.15 Mbps  bytes=286073018  dur=59.982s
+  tcp 10.0.0.3:34452 -> 10.0.0.12:5001  thr=32.73 Mbps  bytes=245186968  dur=59.927s
+  tcp 10.0.0.6:39928 -> 10.0.0.15:5001  thr=30.24 Mbps  bytes=226704140  dur=59.978s
+  tcp 10.0.0.8:40678 -> 10.0.0.10:5001  thr=29.58 Mbps  bytes=221747436  dur=59.965s
+  tcp 10.0.0.5:35006 -> 10.0.0.10:5001  thr=28.65 Mbps  bytes=214669420  dur=59.951s
+
+=== FLOWS OVERALL ===
+Avg throughput (mean per-flow): 6.11 Mbps
+Max throughput (per-flow):      38.15 Mbps
+
 ==
 
 ILP
+
+[INFO] channels: 32 files
+Channels CSV: ./channels_summary.csv
+
+=== CHANNELS OVERALL ===
+Avg throughput (mean of per-channel avg): 59.30 Mbps
+Max throughput (max per-channel peak):   320.84 Mbps
+Avg MLU (mean of MLU_avg):               59.30%
+Max MLU (max of MLU_peak):               320.84%
+[INFO] --flows-glob не задан: берём те же файлы, что и для каналов.
+[INFO] flows: 32 files
+[INFO] flows: 32 files
+Flows CSV:    ./flows_summary.csv
+
+Top flows by throughput:
+  tcp 10.0.0.7:55350 -> 10.0.0.12:5001  thr=48.52 Mbps  bytes=364005640  dur=60.015s
+  tcp 10.0.0.8:32936 -> 10.0.0.12:5001  thr=46.31 Mbps  bytes=347436424  dur=60.013s
+  tcp 10.0.0.8:32920 -> 10.0.0.12:5001  thr=45.01 Mbps  bytes=337742564  dur=60.026s
+  tcp 10.0.0.7:55352 -> 10.0.0.12:5001  thr=24.11 Mbps  bytes=180820262  dur=59.997s
+  tcp 10.0.0.1:39934 -> 10.0.0.11:5001  thr=19.36 Mbps  bytes=144996122  dur=59.919s
+
+=== FLOWS OVERALL ===
+Avg throughput (mean per-flow): 3.70 Mbps
+Max throughput (per-flow):      48.52 Mbps
 
 ==
 
 Greedy
 
+[INFO] channels: 32 files
+Channels CSV: ./channels_summary.csv
+
+=== CHANNELS OVERALL ===
+Avg throughput (mean of per-channel avg): 88.60 Mbps
+Max throughput (max per-channel peak):   358.18 Mbps
+Avg MLU (mean of MLU_avg):               88.60%
+Max MLU (max of MLU_peak):               358.18%
+[INFO] --flows-glob не задан: берём те же файлы, что и для каналов.
+[INFO] flows: 32 files
+[INFO] flows: 32 files
+Flows CSV:    ./flows_summary.csv
+
+Top flows by throughput:
+  tcp 10.0.0.4:57016 -> 10.0.0.14:5001  thr=40.34 Mbps  bytes=302403154  dur=59.965s
+  tcp 10.0.0.6:36264 -> 10.0.0.13:5001  thr=32.89 Mbps  bytes=246478692  dur=59.950s
+  tcp 10.0.0.1:41890 -> 10.0.0.9:5001  thr=32.26 Mbps  bytes=241770284  dur=59.948s
+  tcp 10.0.0.2:51806 -> 10.0.0.9:5001  thr=31.90 Mbps  bytes=238926236  dur=59.916s
+  tcp 10.0.0.1:43128 -> 10.0.0.10:5001  thr=29.36 Mbps  bytes=219906610  dur=59.915s
+
+=== FLOWS OVERALL ===
+Avg throughput (mean per-flow): 5.53 Mbps
+Max throughput (per-flow):      40.34 Mbps
+
 ==
 
 MSA
+
+[INFO] channels: 32 files
+Channels CSV: ./channels_summary.csv
+
+=== CHANNELS OVERALL ===
+Avg throughput (mean of per-channel avg): 40.50 Mbps
+Max throughput (max per-channel peak):   362.71 Mbps
+Avg MLU (mean of MLU_avg):               40.50%
+Max MLU (max of MLU_peak):               362.71%
+[INFO] --flows-glob не задан: берём те же файлы, что и для каналов.
+[INFO] flows: 32 files
+[INFO] flows: 32 files
+Flows CSV:    ./flows_summary.csv
+
+Top flows by throughput:
+  tcp 10.0.0.7:37968 -> 10.0.0.16:5001  thr=32.57 Mbps  bytes=244059254  dur=59.952s
+  tcp 10.0.0.1:40164 -> 10.0.0.11:5001  thr=19.69 Mbps  bytes=147627590  dur=59.982s
+  tcp 10.0.0.3:50012 -> 10.0.0.11:5001  thr=19.69 Mbps  bytes=147610804  dur=59.982s
+  tcp 10.0.0.5:45738 -> 10.0.0.13:5001  thr=19.54 Mbps  bytes=146449764  dur=59.954s
+  tcp 10.0.0.5:45740 -> 10.0.0.13:5001  thr=19.52 Mbps  bytes=146294940  dur=59.946s
+
+=== FLOWS OVERALL ===
+Avg throughput (mean per-flow): 2.53 Mbps
+Max throughput (per-flow):      32.57 Mbps
 
 ==
 
 Frank wolf (FWA) 
 
+[INFO] channels: 32 files
+Channels CSV: ./channels_summary.csv
+
+=== CHANNELS OVERALL ===
+Avg throughput (mean of per-channel avg): 70.79 Mbps
+Max throughput (max per-channel peak):   398.79 Mbps
+Avg MLU (mean of MLU_avg):               70.79%
+Max MLU (max of MLU_peak):               398.79%
+[INFO] --flows-glob не задан: берём те же файлы, что и для каналов.
+[INFO] flows: 32 files
+[INFO] flows: 32 files
+Flows CSV:    ./flows_summary.csv
+
+Top flows by throughput:
+  tcp 10.0.0.3:39162 -> 10.0.0.14:5001  thr=45.43 Mbps  bytes=339242326  dur=59.741s
+  tcp 10.0.0.3:39170 -> 10.0.0.14:5001  thr=44.91 Mbps  bytes=335343448  dur=59.737s
+  tcp 10.0.0.4:47722 -> 10.0.0.14:5001  thr=43.70 Mbps  bytes=326282552  dur=59.735s
+  tcp 10.0.0.1:50642 -> 10.0.0.14:5001  thr=25.82 Mbps  bytes=192853270  dur=59.747s
+  tcp 10.0.0.1:50626 -> 10.0.0.14:5001  thr=22.76 Mbps  bytes=169926568  dur=59.732s
+
+=== FLOWS OVERALL ===
+Avg throughput (mean per-flow): 4.44 Mbps
+Max throughput (per-flow):      45.43 Mbps
 
 ==
 
 USTM
 
+[INFO] channels: 32 files
+Channels CSV: ./channels_summary.csv
+
+=== CHANNELS OVERALL ===
+Avg throughput (mean of per-channel avg): 70.45 Mbps
+Max throughput (max per-channel peak):   355.71 Mbps
+Avg MLU (mean of MLU_avg):               70.45%
+Max MLU (max of MLU_peak):               355.71%
+[INFO] --flows-glob не задан: берём те же файлы, что и для каналов.
+[INFO] flows: 32 files
+[INFO] flows: 32 files
+Flows CSV:    ./flows_summary.csv
+
+Top flows by throughput:
+  tcp 10.0.0.2:50944 -> 10.0.0.9:5001  thr=592.00 Mbps  bytes=74  dur=0.000s
+  tcp 10.0.0.2:50954 -> 10.0.0.9:5001  thr=148.00 Mbps  bytes=74  dur=0.000s
+  tcp 10.0.0.8:40132 -> 10.0.0.13:5001  thr=45.98 Mbps  bytes=344618082  dur=59.957s
+  tcp 10.0.0.8:40148 -> 10.0.0.13:5001  thr=43.38 Mbps  bytes=325175228  dur=59.966s
+  tcp 10.0.0.7:38866 -> 10.0.0.13:5001  thr=42.12 Mbps  bytes=315746036  dur=59.972s
+
+=== FLOWS OVERALL ===
+Avg throughput (mean per-flow): 8.39 Mbps
+Max throughput (per-flow):      592.00 Mbps
+
 ==
 
 OSPF
 
+[INFO] channels: 32 files
+Channels CSV: ./channels_summary.csv
+
+=== CHANNELS OVERALL ===
+Avg throughput (mean of per-channel avg): 45.21 Mbps
+Max throughput (max per-channel peak):   384.80 Mbps
+Avg MLU (mean of MLU_avg):               45.21%
+Max MLU (max of MLU_peak):               384.80%
+[INFO] --flows-glob не задан: берём те же файлы, что и для каналов.
+[INFO] flows: 32 files
+[INFO] flows: 32 files
+Flows CSV:    ./flows_summary.csv
+
+Top flows by throughput:
+  tcp 10.0.0.4:51756 -> 10.0.0.14:5001  thr=24.03 Mbps  bytes=180093542  dur=59.963s
+  tcp 10.0.0.4:59062 -> 10.0.0.13:5001  thr=23.83 Mbps  bytes=178498970  dur=59.931s
+  tcp 10.0.0.5:55482 -> 10.0.0.14:5001  thr=22.94 Mbps  bytes=171827102  dur=59.914s
+  tcp 10.0.0.3:35508 -> 10.0.0.15:5001  thr=22.92 Mbps  bytes=171775428  dur=59.948s
+  tcp 10.0.0.5:46816 -> 10.0.0.16:5001  thr=22.92 Mbps  bytes=171725598  dur=59.948s
+
+=== FLOWS OVERALL ===
+Avg throughput (mean per-flow): 2.83 Mbps
+Max throughput (per-flow):      24.03 Mbps
+
 ==
 
 Load Aware Paths (LAP)
+
+[INFO] channels: 32 files
+Channels CSV: ./channels_summary.csv
+
+=== CHANNELS OVERALL ===
+Avg throughput (mean of per-channel avg): 71.37 Mbps
+Max throughput (max per-channel peak):   282.50 Mbps
+Avg MLU (mean of MLU_avg):               71.37%
+Max MLU (max of MLU_peak):               282.50%
+[INFO] --flows-glob не задан: берём те же файлы, что и для каналов.
+[INFO] flows: 32 files
+[INFO] flows: 32 files
+Flows CSV:    ./flows_summary.csv
+
+Top flows by throughput:
+  tcp 10.0.0.2:45854 -> 10.0.0.10:5001  thr=36.85 Mbps  bytes=276306926  dur=59.991s
+  tcp 10.0.0.1:52306 -> 10.0.0.10:5001  thr=34.12 Mbps  bytes=255831524  dur=59.984s
+  tcp 10.0.0.2:45852 -> 10.0.0.10:5001  thr=33.45 Mbps  bytes=250797672  dur=59.985s
+  tcp 10.0.0.1:52298 -> 10.0.0.10:5001  thr=32.87 Mbps  bytes=246355464  dur=59.965s
+  tcp 10.0.0.3:33566 -> 10.0.0.13:5001  thr=29.66 Mbps  bytes=222022258  dur=59.891s
+
+=== FLOWS OVERALL ===
+Avg throughput (mean per-flow): 4.45 Mbps
+Max throughput (per-flow):      36.85 Mbps

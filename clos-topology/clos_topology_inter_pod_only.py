@@ -197,7 +197,7 @@ def run_test():
     # чтобы при достаточном количестве потоков перегрузить core‑уровень.
     for src_host, dst_host in demands:
         dst_ip = dst_host.IP()
-        cmd = f"iperf -c {dst_ip} -t 6000 -P 2 > /tmp/iperf_client_{src_host.name}_to_{dst_host.name}.log &"
+        cmd = f"iperf -c {dst_ip} -b 100M -t 6000 -P 2 > /tmp/iperf_client_{src_host.name}_to_{dst_host.name}.log &"
         print(cmd, f"between: {src_host} -> {dst_host}")
         src_host.cmd(cmd)
 
