@@ -393,18 +393,21 @@ func parseFile(path string, o flowScanOpts) (map[flowKey]flowAgg, error) {
 		var seqEnd, ackNum uint32
 		var hasACK bool
 		var sport, dport uint16
+		tcpPayloadLen := 0 // <— ВАЖНО: длина TCP payload из самого TCP-слоя
 
 		switch tl := tr.(type) {
 		case *layers.TCP:
 			isTCP = true
 			l4proto = "tcp"
 			sport, dport = uint16(tl.SrcPort), uint16(tl.DstPort)
-			seqEnd = uint32(tl.Seq) + uint32(len(tl.Payload))
+			tcpPayloadLen = len(tl.Payload)
+			seqEnd = uint32(tl.Seq) + uint32(tcpPayloadLen)
 			ackNum = uint32(tl.Ack)
 			hasACK = tl.ACK
 		case *layers.UDP:
 			l4proto = "udp"
-			sport, dport = uint16(tr.(*layers.UDP).SrcPort), uint16(tr.(*layers.UDP).DstPort)
+			udp := tr.(*layers.UDP)
+			sport, dport = uint16(udp.SrcPort), uint16(udp.DstPort)
 		default:
 			continue
 		}
@@ -430,6 +433,7 @@ func parseFile(path string, o flowScanOpts) (map[flowKey]flowAgg, error) {
 			Sp: sport, Dp: dport,
 			Proto: l4proto,
 		}
+
 		f := flows[key]
 		f.File = filepath.Base(path)
 		f.Packets++
@@ -441,12 +445,13 @@ func parseFile(path string, o flowScanOpts) (map[flowKey]flowAgg, error) {
 		if ts.After(f.Last) {
 			f.Last = ts
 		}
+
 		if isTCP {
 			if f.Outstanding == nil {
 				f.Outstanding = make(map[uint32]time.Time)
 			}
-			if seqEnd > 0 && len(p.ApplicationLayer().Payload()) > 0 {
-				// если нет AL — fallback к TCP payload длине
+			// Используем TCP payload длину, НИ КАКОГО ApplicationLayer():
+			if tcpPayloadLen > 0 && seqEnd > 0 {
 				f.Outstanding[seqEnd] = ts
 			}
 			if hasACK {
@@ -475,6 +480,7 @@ func parseFile(path string, o flowScanOpts) (map[flowKey]flowAgg, error) {
 				}
 			}
 		}
+
 		flows[key] = f
 	}
 	return flows, nil
