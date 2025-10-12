@@ -333,6 +333,8 @@ func percentile(sorted []float64, p float64) float64 {
 	return sorted[l]*(1.0-w) + sorted[u]*w
 }
 
+func isFinite(x float64) bool { return !math.IsNaN(x) && !math.IsInf(x, 0) }
+
 /************** Main **************/
 func main() {
 	flag.Parse()
@@ -447,33 +449,30 @@ func main() {
 		fmt.Printf("Flows CSV: %s  (потоков: %d)\n", *outFlowsCSV, len(rows))
 	}
 
-	// агрегаты по throughput и RTT
 	var tputs []float64
 	var rtts []float64
+
 	for _, r := range rows {
-		if r.TputMbps > 0 && math.IsFinite(r.TputMbps) {
+		if r.TputMbps > 0 && isFinite(r.TputMbps) {
 			tputs = append(tputs, r.TputMbps)
 		}
 		if r.AvgRTTms != "" {
 			var v float64
 			fmt.Sscanf(r.AvgRTTms, "%f", &v)
-			if v > 0 && math.IsFinite(v) {
+			if v > 0 && isFinite(v) {
 				rtts = append(rtts, v)
 			}
 		}
 	}
-	sort.Float64s(tputs)
-	sort.Float64s(rtts)
 
-	tMean, tMed, tP95 := math.NaN(), math.NaN(), math.NaN()
+	// средние
+	tMean := math.NaN()
 	if len(tputs) > 0 {
 		sum := 0.0
 		for _, x := range tputs {
 			sum += x
 		}
 		tMean = sum / float64(len(tputs))
-		tMed = percentile(tputs, 50)
-		tP95 = percentile(tputs, 95)
 	}
 	rttMean := math.NaN()
 	if len(rtts) > 0 {
@@ -484,15 +483,15 @@ func main() {
 		rttMean = sum / float64(len(rtts))
 	}
 
-	fmt.Println("\n=== SUMMARY (per-flow) ===")
-	if len(tputs) > 0 {
-		fmt.Printf("Throughput Mbps: mean=%.3f  median=%.3f  p95=%.3f  (n=%d)\n", tMean, tMed, tP95, len(tputs))
+	// компактный вывод ТОЛЬКО средних
+	if math.IsNaN(tMean) {
+		fmt.Println("Mean throughput (Mbps): NA")
 	} else {
-		fmt.Println("Throughput: нет данных")
+		fmt.Printf("Mean throughput (Mbps): %.3f\n", tMean)
 	}
-	if len(rtts) > 0 {
-		fmt.Printf("TCP RTT ms:     mean=%.3f  (n=%d flows with RTT)\n", rttMean, len(rtts))
+	if math.IsNaN(rttMean) {
+		fmt.Println("Mean TCP RTT (ms):     NA")
 	} else {
-		fmt.Println("TCP RTT: нет данных")
+		fmt.Printf("Mean TCP RTT (ms):     %.3f\n", rttMean)
 	}
 }
