@@ -1,287 +1,411 @@
+// pcap_summary_flows_channels.go
+// go 1.21+
+// deps: github.com/google/gopacket  (и системный libpcap)
+//
+// Что считает:
+//   1) MLU по каналам (per-file): avg/peak по бинам -> MLU_avg/MLU_peak на базе ёмкости канала
+//   2) Пропускную способность по потокам: TCP/UDP 5-tuple -> bytes, duration, throughput_bps
+//   3) Средний TCP RTT по потокам (по кумулятивным ACK'ам, если в одном pcap видны оба направления)
+//
+// Примеры запуска см. внизу файла.
+
 package main
 
 import (
-	"bufio"
 	"encoding/csv"
+	"errors"
 	"flag"
 	"fmt"
-	"io"
-	"math"
+	"log"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
-	"github.com/google/gopacket/pcapgo"
+	"github.com/google/gopacket/pcap"
 )
 
-/************** Flags **************/
-var (
-	globPattern  = flag.String("glob", "", "Glob-шаблон pcap/pcapng файлов одной папки алгоритма (напр. inter_pod_only/grd/*.pcap)")
-	workers      = flag.Int("workers", runtime.NumCPU(), "Количество параллельных воркеров")
-	outFlowsCSV  = flag.String("out-flows", "flows.csv", "Выходной CSV со сводкой по потокам")
-	protoFilter  = flag.String("proto", "any", "Фильтр протокола: tcp|udp|any")
-	portFilter   = flag.Int("port", 0, "Фильтр по TCP/UDP порту (0 = любой)")
-	minFlowBytes = flag.Int64("min-flow-bytes", 0, "Порог отсечения потоков по объёму IP-payload байт")
-	quiet        = flag.Bool("quiet", false, "Тише логирование")
-)
+/* ========================= FLAGS ========================= */
 
-/************** Types **************/
+type argsT struct {
+	Glob         string // pcap’ы для каналов (MLU per channel)
+	CapsCSV      string // переопределение capacity per file: CSV "file,capacity_mbps"
+	CapacityMbps float64
+	BinSec       float64
+	OutChannels  string
+
+	FlowsGlob string // pcap’ы, по которым вытаскиваем потоки (обычно у приёмников)
+	Proto     string // tcp|udp|any
+	TCPPort   int    // 0 = любой
+	UDPPort   int    // 0 = любой
+	OutFlows  string
+
+	Jobs    int
+	SkipBad bool
+}
+
+func parseFlags() argsT {
+	var a argsT
+	flag.StringVar(&a.Glob, "glob", "", "Glob PCAP для расчёта MLU по каналам (напр. '/tmp/*.pcap') [required]")
+	flag.StringVar(&a.CapsCSV, "caps-csv", "", "CSV c ёмкостью каналов: file,capacity_mbps (перекрывает --capacity-mbps)")
+	flag.Float64Var(&a.CapacityMbps, "capacity-mbps", 0, "Ёмкость канала по умолчанию (Mbps) для всех файлов без явного значения")
+	flag.Float64Var(&a.BinSec, "bin", 1.0, "Размер бина по времени для MLU (сек)")
+	flag.StringVar(&a.OutChannels, "out-channels", "./channels_summary.csv", "CSV-вывод для каналов")
+
+	flag.StringVar(&a.FlowsGlob, "flows-glob", "", "Glob PCAP для извлечения потоков (обычно pcap приёмников)")
+	flag.StringVar(&a.Proto, "proto", "tcp", "Протоколы для flows: tcp|udp|any")
+	flag.IntVar(&a.TCPPort, "tcp-port", 0, "Фильтр tcp.port (0 = любой)")
+	flag.IntVar(&a.UDPPort, "udp-port", 0, "Фильтр udp.port (0 = любой)")
+	flag.StringVar(&a.OutFlows, "out-flows", "./flows_summary.csv", "CSV-вывод для потоков")
+
+	flag.IntVar(&a.Jobs, "jobs", runtime.NumCPU(), "Параллельные файлы")
+	flag.BoolVar(&a.SkipBad, "skip-bad", true, "Пропускать битые pcap (иначе завершаемся)")
+	flag.Parse()
+
+	if a.Glob == "" {
+		flag.Usage()
+		os.Exit(2)
+	}
+	if a.BinSec <= 0 {
+		a.BinSec = 1.0
+	}
+	if a.Jobs < 1 {
+		a.Jobs = 1
+	}
+	return a
+}
+
+/* ========================= TYPES ========================= */
+
+type chanRow struct {
+	File            string
+	CapacityMbps    float64
+	AvgBps, PeakBps float64
+	MLUAvg, MLUPeak float64
+	TimeBins        int
+}
+
 type flowKey struct {
-	Src, Dst     string
-	Sport, Dport uint16
-	Proto        string // TCP|UDP
+	Src, Dst string
+	Sp, Dp   uint16
+	Proto    string // "tcp"|"udp"
 }
 
-func (k flowKey) Reverse() flowKey {
-	return flowKey{Src: k.Dst, Dst: k.Src, Sport: k.Dport, Dport: k.Sport, Proto: k.Proto}
-}
+type flowAgg struct {
+	Packets int64
+	Bytes   int64
+	First   time.Time
+	Last    time.Time
 
-type flowStats struct {
-	BytesPayload int64 // только IP-payload (без L2/L3 заголовков)
-	Pkts         int64
-	First, Last  time.Time
-
-	// RTT (для TCP, по кумулятивным ACK)
+	// Поля для TCP RTT (по кумулятивным ACK'ам)
 	RTTSum      time.Duration
 	RTTSamples  int64
-	Outstanding map[uint32]time.Time // seqEnd -> tSent (для исходящего направления)
+	Outstanding map[uint32]time.Time // seqEnd -> tSent (для исходящих сегментов)
 }
 
-type flowRow struct {
-	flowKey
-	Packets     int64
-	Bytes       int64
-	DurationSec float64
-	TputMbps    float64
-	AvgRTTms    string // пусто для не-TCP или без сэмплов
-	RTTSamples  int64
+/* ========================= UTIL ========================= */
+
+func humanBps(bps float64) string {
+	u := []string{"bps", "Kbps", "Mbps", "Gbps", "Tbps"}
+	i := 0
+	for bps >= 1000 && i < len(u)-1 {
+		bps /= 1000
+		i++
+	}
+	return fmt.Sprintf("%.2f %s", bps, u[i])
+}
+func safeDiv(a, b float64) float64 {
+	if b == 0 {
+		return 0
+	}
+	return a / b
 }
 
-/************** PCAP Reader **************/
-type reader interface {
-	ReadPacketData() (data []byte, ci gopacket.CaptureInfo, err error)
-}
-
-func openAny(path string) (reader, error) {
+func readCapsCSV(path string) (map[string]float64, error) {
+	m := map[string]float64{}
+	if path == "" {
+		return m, nil
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	// Авто-детект pcapng по магии 0a0d0d0a
-	br := bufio.NewReader(f)
-	magic, _ := br.Peek(4)
-	if len(magic) == 4 && magic[0] == 0x0a && magic[1] == 0x0d && magic[2] == 0x0d && magic[3] == 0x0a {
-		ng, err := pcapgo.NewNgReader(br, pcapgo.DefaultNgReaderOptions)
+	defer f.Close()
+	r := csv.NewReader(f)
+	rows, err := r.ReadAll()
+	if err != nil {
+		return nil, err
+	}
+	for i, row := range rows {
+		if len(row) < 2 {
+			continue
+		}
+		if i == 0 && strings.Contains(strings.ToLower(row[0]), "file") {
+			continue // header
+		}
+		c, err := strconv.ParseFloat(strings.TrimSpace(row[1]), 64)
 		if err != nil {
-			f.Close()
-			return nil, err
+			return nil, fmt.Errorf("caps-csv parse: %v", err)
 		}
-		return &wrappedReader{closer: f, ng: ng}, nil
+		m[strings.TrimSpace(row[0])] = c
 	}
-	pr, err := pcapgo.NewReader(br)
-	if err != nil {
-		f.Close()
-		return nil, err
-	}
-	return &wrappedReader{closer: f, pr: pr}, nil
+	return m, nil
 }
 
-type wrappedReader struct {
-	closer *os.File
-	pr     *pcapgo.Reader
-	ng     *pcapgo.NgReader
-}
-
-func (w *wrappedReader) ReadPacketData() ([]byte, gopacket.CaptureInfo, error) {
-	if w.ng != nil {
-		return w.ng.ReadPacketData()
+func matchCapacity(file string, caps map[string]float64, def float64) float64 {
+	if v, ok := caps[file]; ok {
+		return v
 	}
-	return w.pr.ReadPacketData()
-}
-func (w *wrappedReader) Close() error {
-	if w.closer != nil {
-		return w.closer.Close()
+	base := filepath.Base(file)
+	if v, ok := caps[base]; ok {
+		return v
 	}
-	return nil
+	return def
 }
 
-/************** Per-file parsing **************/
-type parseOpts struct {
-	Proto string // tcp|udp|any
-	Port  int    // фильтр по src/dst порту
+/* ========================= PCAP READER ========================= */
+
+type opener struct {
+	handle *pcap.Handle
+	lt     layers.LinkType
 }
 
-func parseFile(path string, opts parseOpts) (map[flowKey]*flowStats, error) {
-	r, err := openAny(path)
+func openAny(path string) (*opener, error) {
+	h, err := pcap.OpenOffline(path)
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if c, ok := r.(interface{ Close() error }); ok {
-			_ = c.Close()
-		}
-	}()
+	return &opener{handle: h, lt: layers.LinkType(h.LinkType())}, nil
+}
 
-	flows := make(map[flowKey]*flowStats, 4096)
+func (o *opener) Close() {
+	if o.handle != nil {
+		o.handle.Close()
+	}
+}
+
+/* ========================= CHANNEL SCAN ========================= */
+
+type chanScanOpts struct {
+	BinSec  float64
+	CapBps  float64
+	SkipBad bool
+}
+
+func scanChannel(file string, o chanScanOpts) (chanRow, error) {
+	op, err := openAny(file)
+	if err != nil {
+		if o.SkipBad {
+			log.Printf("[WARN] skip channel %s: %v", file, err)
+			return chanRow{File: file, CapacityMbps: o.CapBps / 1e6}, nil
+		}
+		return chanRow{}, err
+	}
+	defer op.Close()
+
+	bins := map[int64]int64{}
+	var lastBin int64 = -1
+	var start time.Time
 
 	for {
-		data, ci, err := r.ReadPacketData()
-		if err == io.EOF {
+		data, ci, e := op.handle.ReadPacketData()
+		_ = data
+		if e != nil {
 			break
 		}
-		if err != nil {
-			return nil, err
+		if start.IsZero() {
+			start = ci.Timestamp
 		}
-
-		p := gopacket.NewPacket(data, layers.LayerTypeEthernet, gopacket.DecodeOptions{Lazy: true, NoCopy: true})
-
-		// IPv4/IPv6
-		var ipSrc, ipDst string
-		var ipPayloadLen int // длина полезной нагрузки IP (без заголовка IP)
-		var l4proto string
-
-		if l4 := p.Layer(layers.LayerTypeIPv4); l4 != nil {
-			ip := l4.(*layers.IPv4)
-			ipSrc, ipDst = ip.SrcIP.String(), ip.DstIP.String()
-			l4proto = ip.Protocol.String()
-			ihl := int(ip.IHL) * 4
-			total := int(ip.Length)
-			if total >= ihl {
-				ipPayloadLen = total - ihl
-			} else {
-				ipPayloadLen = 0
-			}
-		} else if l6 := p.Layer(layers.LayerTypeIPv6); l6 != nil {
-			ip := l6.(*layers.IPv6)
-			ipSrc, ipDst = ip.SrcIP.String(), ip.DstIP.String()
-			l4proto = ip.NextHeader.String()
-			ipPayloadLen = int(ip.Length) // у IPv6 Length уже payload
-		} else {
+		dt := ci.Timestamp.Sub(start).Seconds()
+		if dt < 0 {
 			continue
 		}
+		idx := int64(dt / o.BinSec)
+		bins[idx] += int64(ci.Length) // on-the-wire bytes
+		if idx > lastBin {
+			lastBin = idx
+		}
+	}
 
-		// L4
-		isTCP := false
-		var sport, dport uint16
-		var seqEnd, ackNum uint32
-		var hasACK bool
+	// агрегаты
+	nbins := 0
+	var sumBps, peakBps float64
+	for i := int64(0); i <= lastBin; i++ {
+		b := float64(bins[i])
+		bps := (b * 8.0) / o.BinSec
+		sumBps += bps
+		if bps > peakBps {
+			peakBps = bps
+		}
+		nbins++
+	}
+	var avgBps float64
+	if nbins > 0 {
+		avgBps = sumBps / float64(nbins)
+	}
+	return chanRow{
+		File:         file,
+		CapacityMbps: o.CapBps / 1e6,
+		AvgBps:       avgBps,
+		PeakBps:      peakBps,
+		MLUAvg:       safeDiv(avgBps, o.CapBps),
+		MLUPeak:      safeDiv(peakBps, o.CapBps),
+		TimeBins:     nbins,
+	}, nil
+}
 
-		if tl := p.Layer(layers.LayerTypeTCP); tl != nil {
-			t := tl.(*layers.TCP)
-			isTCP = true
-			l4proto = "TCP"
-			sport, dport = uint16(t.SrcPort), uint16(t.DstPort)
-			seqEnd = uint32(t.Seq) + uint32(len(t.Payload))
-			ackNum = uint32(t.Ack)
-			hasACK = t.ACK
-		} else if ul := p.Layer(layers.LayerTypeUDP); ul != nil {
-			u := ul.(*layers.UDP)
-			l4proto = "UDP"
-			sport, dport = uint16(u.SrcPort), uint16(u.DstPort)
-		} else {
-			continue
+/* ========================= FLOWS SCAN ========================= */
+
+type flowScanOpts struct {
+	Proto   string // tcp|udp|any
+	TCPPort int
+	UDPPort int
+	SkipBad bool
+}
+
+func reverseKey(k flowKey) flowKey {
+	return flowKey{Src: k.Dst, Dst: k.Src, Sp: k.Dp, Dp: k.Sp, Proto: k.Proto}
+}
+
+func parseFlowPkt(data []byte, lt layers.LinkType, ci gopacket.CaptureInfo, agg map[flowKey]flowAgg, o flowScanOpts) {
+	pkt := gopacket.NewPacket(data, lt, gopacket.DecodeOptions{Lazy: true, NoCopy: true})
+	netL := pkt.NetworkLayer()
+	if netL == nil {
+		return
+	}
+	var srcIP, dstIP net.IP
+	switch ly := netL.(type) {
+	case *layers.IPv4:
+		srcIP, dstIP = ly.SrcIP, ly.DstIP
+	case *layers.IPv6:
+		srcIP, dstIP = ly.SrcIP, ly.DstIP
+	default:
+		return
+	}
+
+	trL := pkt.TransportLayer()
+	if trL == nil {
+		return
+	}
+
+	ts := ci.Timestamp
+
+	switch tl := trL.(type) {
+	case *layers.TCP:
+		if o.Proto == "udp" {
+			return
+		}
+		if o.TCPPort > 0 && !(int(tl.SrcPort) == o.TCPPort || int(tl.DstPort) == o.TCPPort) {
+			return
+		}
+		key := flowKey{Src: srcIP.String(), Dst: dstIP.String(), Sp: uint16(tl.SrcPort), Dp: uint16(tl.DstPort), Proto: "tcp"}
+		f := agg[key]
+		f.Packets++
+		f.Bytes += int64(ci.Length) // on-the-wire bytes
+		if f.First.IsZero() || ts.Before(f.First) {
+			f.First = ts
+		}
+		if ts.After(f.Last) {
+			f.Last = ts
+		}
+		if f.Outstanding == nil {
+			f.Outstanding = make(map[uint32]time.Time)
 		}
 
-		// Протокольный/портовый фильтр
-		switch strings.ToLower(opts.Proto) {
-		case "tcp":
-			if !isTCP {
-				continue
-			}
-		case "udp":
-			if isTCP {
-				continue
-			}
-		}
-		if opts.Port > 0 {
-			if int(sport) != opts.Port && int(dport) != opts.Port {
-				continue
-			}
+		// длина TCP payload
+		payloadLen := len(tl.Payload)
+		// если есть полезная нагрузка — регистрируем "отправку" сегмента (seqEnd)
+		if payloadLen > 0 {
+			seqEnd := uint32(tl.Seq) + uint32(payloadLen)
+			f.Outstanding[seqEnd] = ts
 		}
 
-		k := flowKey{Src: ipSrc, Dst: ipDst, Sport: sport, Dport: dport, Proto: l4proto}
-		fs := flows[k]
-		if fs == nil {
-			fs = &flowStats{Outstanding: make(map[uint32]time.Time)}
-			flows[k] = fs
-		}
-
-		// учёт по пакету
-		fs.BytesPayload += int64(ipPayloadLen)
-		fs.Pkts++
-		ts := ci.Timestamp
-		if fs.First.IsZero() || ts.Before(fs.First) {
-			fs.First = ts
-		}
-		if ts.After(fs.Last) {
-			fs.Last = ts
-		}
-
-		// RTT только для TCP: «отправили сегмент» -> ждём ACK в обратном key
-		if isTCP {
-			if seqEnd > 0 && ipPayloadLen > 0 {
-				fs.Outstanding[seqEnd] = ts
-			}
-			if hasACK {
-				rev := k.Reverse()
-				if peer := flows[rev]; peer != nil && len(peer.Outstanding) > 0 {
-					var chosen uint32
-					var sent time.Time
-					for sEnd, tSent := range peer.Outstanding {
-						if sEnd <= ackNum && (chosen == 0 || sEnd < chosen) {
-							chosen, sent = sEnd, tSent
-						}
+		// если пришёл ACK — пробуем закрыть outstanding reverse-направления и посчитать RTT
+		if tl.ACK {
+			revKey := reverseKey(key)
+			if rev, ok := agg[revKey]; ok && len(rev.Outstanding) > 0 {
+				ackNum := uint32(tl.Ack)
+				// найдём минимальный seqEnd <= ackNum (кумулятивный ACK)
+				var chosen uint32
+				var sent time.Time
+				for sEnd, tSent := range rev.Outstanding {
+					if sEnd <= ackNum && (chosen == 0 || sEnd < chosen) {
+						chosen, sent = sEnd, tSent
 					}
-					if chosen != 0 && !sent.IsZero() {
-						rtt := ts.Sub(sent)
-						if rtt > 0 && rtt < 10*time.Second {
-							peer.RTTSum += rtt
-							peer.RTTSamples++
-						}
-						// удаляем все подтверждённые (кумулятивный ACK)
-						for sEnd := range peer.Outstanding {
-							if sEnd <= ackNum {
-								delete(peer.Outstanding, sEnd)
-							}
+				}
+				if chosen != 0 && !sent.IsZero() {
+					rtt := ts.Sub(sent)
+					if rtt > 0 && rtt < 10*time.Second {
+						rev.RTTSum += rtt
+						rev.RTTSamples++
+					}
+					// удалим все подтверждённые sEnd <= ackNum
+					for sEnd := range rev.Outstanding {
+						if sEnd <= ackNum {
+							delete(rev.Outstanding, sEnd)
 						}
 					}
 				}
+				agg[revKey] = rev
 			}
 		}
+		agg[key] = f
+
+	case *layers.UDP:
+		if o.Proto == "tcp" {
+			return
+		}
+		if o.UDPPort > 0 && !(int(tl.SrcPort) == o.UDPPort || int(tl.DstPort) == o.UDPPort) {
+			return
+		}
+		key := flowKey{Src: srcIP.String(), Dst: dstIP.String(), Sp: uint16(tl.SrcPort), Dp: uint16(tl.DstPort), Proto: "udp"}
+		f := agg[key]
+		f.Packets++
+		f.Bytes += int64(ci.Length)
+		if f.First.IsZero() || ts.Before(f.First) {
+			f.First = ts
+		}
+		if ts.After(f.Last) {
+			f.Last = ts
+		}
+		agg[key] = f
+	default:
+		return
 	}
-	return flows, nil
 }
 
-/************** Merge policy (best observation per flow) **************/
-func mergeBest(dst map[flowKey]flowStats, src map[flowKey]*flowStats) {
-	for k, v := range src {
-		// игнорируем нулевую длительность
-		if v.First.IsZero() || v.Last.Sub(v.First) <= 0 {
-			continue
+func scanFlows(file string, o flowScanOpts) (map[flowKey]flowAgg, error) {
+	op, err := openAny(file)
+	if err != nil {
+		if o.SkipBad {
+			log.Printf("[WARN] skip flows %s: %v", file, err)
+			return map[flowKey]flowAgg{}, nil
 		}
-		if ex, ok := dst[k]; !ok {
-			dst[k] = *v
-		} else {
-			// Берём наблюдение с наибольшим объёмом IP-полезной нагрузки;
-			// при равенстве — с большим числом пакетов.
-			if v.BytesPayload > ex.BytesPayload || (v.BytesPayload == ex.BytesPayload && v.Pkts > ex.Pkts) {
-				dst[k] = *v
-			}
-		}
+		return nil, err
 	}
+	defer op.Close()
+
+	agg := make(map[flowKey]flowAgg, 4096)
+	for {
+		data, ci, e := op.handle.ReadPacketData()
+		if e != nil {
+			break
+		}
+		parseFlowPkt(data, op.lt, ci, agg, o)
+	}
+	return agg, nil
 }
 
-/************** CSV **************/
-func writeFlowsCSV(path string, rows []flowRow) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil && !os.IsExist(err) {
-		return err
-	}
+/* ========================= CSV OUT ========================= */
+
+func writeChannelsCSV(path string, rows []chanRow) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
@@ -289,21 +413,16 @@ func writeFlowsCSV(path string, rows []flowRow) error {
 	defer f.Close()
 	w := csv.NewWriter(f)
 	defer w.Flush()
-
-	_ = w.Write([]string{
-		"proto", "src", "sport", "dst", "dport",
-		"packets", "bytes_ip_payload", "duration_sec", "throughput_mbps",
-		"avg_tcp_rtt_ms", "rtt_samples",
-	})
+	_ = w.Write([]string{"file", "capacity_mbps", "avg_bps", "peak_bps", "MLU_avg", "MLU_peak", "time_bins"})
 	for _, r := range rows {
 		rec := []string{
-			r.Proto, r.Src, fmt.Sprintf("%d", r.Sport), r.Dst, fmt.Sprintf("%d", r.Dport),
-			fmt.Sprintf("%d", r.Packets),
-			fmt.Sprintf("%d", r.Bytes),
-			fmt.Sprintf("%.6f", r.DurationSec),
-			fmt.Sprintf("%.6f", r.TputMbps),
-			r.AvgRTTms,
-			fmt.Sprintf("%d", r.RTTSamples),
+			r.File,
+			fmt.Sprintf("%.6f", r.CapacityMbps),
+			fmt.Sprintf("%.3f", r.AvgBps),
+			fmt.Sprintf("%.3f", r.PeakBps),
+			fmt.Sprintf("%.6f", r.MLUAvg),
+			fmt.Sprintf("%.6f", r.MLUPeak),
+			strconv.Itoa(r.TimeBins),
 		}
 		if err := w.Write(rec); err != nil {
 			return err
@@ -312,186 +431,374 @@ func writeFlowsCSV(path string, rows []flowRow) error {
 	return w.Error()
 }
 
-/************** Helpers **************/
-func percentile(sorted []float64, p float64) float64 {
-	if len(sorted) == 0 {
-		return math.NaN()
+func writeFlowsCSV(path string, agg map[flowKey]flowAgg) error {
+	type flowRow struct {
+		flowKey
+		Packets    int64
+		Bytes      int64
+		Duration   float64
+		ThrBps     float64
+		AvgRTTms   string
+		RTTSamples int64
 	}
-	if p <= 0 {
-		return sorted[0]
-	}
-	if p >= 100 {
-		return sorted[len(sorted)-1]
-	}
-	pos := (p / 100.0) * float64(len(sorted)-1)
-	l := int(math.Floor(pos))
-	u := int(math.Ceil(pos))
-	if l == u {
-		return sorted[l]
-	}
-	w := pos - float64(l)
-	return sorted[l]*(1.0-w) + sorted[u]*w
-}
-
-func isFinite(x float64) bool { return !math.IsNaN(x) && !math.IsInf(x, 0) }
-
-/************** Main **************/
-func main() {
-	flag.Parse()
-	if *globPattern == "" {
-		fmt.Fprintln(os.Stderr, "Укажите --glob, например: inter_pod_only/grd/*.pcap")
-		os.Exit(2)
-	}
-	if *workers < 1 {
-		*workers = 1
-	}
-
-	files, err := filepath.Glob(*globPattern)
-	if err != nil || len(files) == 0 {
-		fmt.Fprintf(os.Stderr, "Файлы не найдены по шаблону: %s\n", *globPattern)
-		os.Exit(2)
-	}
-	sort.Strings(files)
-	if !*quiet {
-		fmt.Printf("[INFO] files: %d, workers: %d\n", len(files), *workers)
-	}
-
-	type job struct{ path string }
-	type res struct {
-		m   map[flowKey]*flowStats
-		err error
-	}
-
-	in := make(chan job)
-	out := make(chan res)
-	var wg sync.WaitGroup
-
-	// воркеры
-	wg.Add(*workers)
-	for i := 0; i < *workers; i++ {
-		go func() {
-			defer wg.Done()
-			opts := parseOpts{Proto: strings.ToLower(*protoFilter), Port: *portFilter}
-			for j := range in {
-				m, e := parseFile(j.path, opts)
-				out <- res{m: m, err: e}
-			}
-		}()
-	}
-	go func() {
-		for _, p := range files {
-			in <- job{path: p}
-		}
-		close(in)
-		wg.Wait()
-		close(out)
-	}()
-
-	// сбор и merge
-	flows := make(map[flowKey]flowStats)
-	errCount := 0
-	for r := range out {
-		if r.err != nil {
-			errCount++
-			if !*quiet {
-				fmt.Fprintf(os.Stderr, "[WARN] %v\n", r.err)
-			}
+	rows := make([]flowRow, 0, len(agg))
+	for k, v := range agg {
+		d := v.Last.Sub(v.First).Seconds()
+		if d <= 0 {
 			continue
 		}
-		mergeBest(flows, r.m)
-	}
-	if !*quiet && errCount > 0 {
-		fmt.Printf("[INFO] файлов с ошибками: %d\n", errCount)
-	}
-
-	// в строки
-	rows := make([]flowRow, 0, len(flows))
-	for k, v := range flows {
-		dur := v.Last.Sub(v.First).Seconds()
-		if dur <= 0 {
-			continue
-		}
-		tput := (float64(v.BytesPayload) * 8.0) / dur / 1e6 // Mbps
+		thr := (float64(v.Bytes) * 8.0) / d
 		avgRTT := ""
-		if strings.EqualFold(k.Proto, "TCP") && v.RTTSamples > 0 {
+		if strings.ToLower(k.Proto) == "tcp" && v.RTTSamples > 0 {
 			avgRTT = fmt.Sprintf("%.3f", float64(v.RTTSum.Microseconds())/1000.0/float64(v.RTTSamples))
 		}
 		rows = append(rows, flowRow{
-			flowKey:     k,
-			Packets:     v.Pkts,
-			Bytes:       v.BytesPayload,
-			DurationSec: dur,
-			TputMbps:    tput,
-			AvgRTTms:    avgRTT,
-			RTTSamples:  v.RTTSamples,
+			flowKey:    k,
+			Packets:    v.Packets,
+			Bytes:      v.Bytes,
+			Duration:   d,
+			ThrBps:     thr,
+			AvgRTTms:   avgRTT,
+			RTTSamples: v.RTTSamples,
 		})
 	}
-	// фильтр по min bytes
-	if *minFlowBytes > 0 {
-		filt := rows[:0]
-		for _, r := range rows {
-			if r.Bytes >= *minFlowBytes {
-				filt = append(filt, r)
-			}
-		}
-		rows = filt
+	sort.Slice(rows, func(i, j int) bool { return rows[i].ThrBps > rows[j].ThrBps })
+
+	f, err := os.Create(path)
+	if err != nil {
+		return err
 	}
-
-	// сортировка для удобства
-	sort.Slice(rows, func(i, j int) bool { return rows[i].TputMbps > rows[j].TputMbps })
-
-	// CSV
-	if err := writeFlowsCSV(*outFlowsCSV, rows); err != nil {
-		fmt.Fprintf(os.Stderr, "Ошибка записи CSV: %v\n", err)
-		os.Exit(1)
-	}
-	if !*quiet {
-		fmt.Printf("Flows CSV: %s  (потоков: %d)\n", *outFlowsCSV, len(rows))
-	}
-
-	var tputs []float64
-	var rtts []float64
-
+	defer f.Close()
+	w := csv.NewWriter(f)
+	defer w.Flush()
+	_ = w.Write([]string{"proto", "src", "sp", "dst", "dp", "packets", "bytes", "duration_s", "throughput_bps", "avg_tcp_rtt_ms", "rtt_samples"})
 	for _, r := range rows {
-		if r.TputMbps > 0 && isFinite(r.TputMbps) {
-			tputs = append(tputs, r.TputMbps)
+		rec := []string{
+			r.Proto, r.Src, strconv.Itoa(int(r.Sp)), r.Dst, strconv.Itoa(int(r.Dp)),
+			strconv.FormatInt(r.Packets, 10),
+			strconv.FormatInt(r.Bytes, 10),
+			fmt.Sprintf("%.6f", r.Duration),
+			fmt.Sprintf("%.3f", r.ThrBps),
+			r.AvgRTTms,
+			strconv.FormatInt(r.RTTSamples, 10),
 		}
-		if r.AvgRTTms != "" {
-			var v float64
-			fmt.Sscanf(r.AvgRTTms, "%f", &v)
-			if v > 0 && isFinite(v) {
-				rtts = append(rtts, v)
+		if err := w.Write(rec); err != nil {
+			return err
+		}
+	}
+	return w.Error()
+}
+
+/* ========================= MAIN ========================= */
+
+func main() {
+	a := parseFlags()
+
+	// Список файлов каналов
+	files, err := filepath.Glob(a.Glob)
+	if err != nil {
+		log.Fatalf("[ERROR] glob: %v", err)
+	}
+	if len(files) == 0 {
+		log.Fatalf("[ERROR] no files matched: %s", a.Glob)
+	}
+	sort.Strings(files)
+	fmt.Printf("[INFO] channels: %d files\n", len(files))
+
+	// Карта ёмкостей per file
+	caps, err := readCapsCSV(a.CapsCSV)
+	if err != nil {
+		log.Fatalf("[ERROR] caps-csv: %v", err)
+	}
+	if len(caps) == 0 && a.CapacityMbps <= 0 {
+		log.Fatalf("[ERROR] neither --caps-csv nor --capacity-mbps given")
+	}
+
+	/* ---------- CHANNELS (MLU per channel) ---------- */
+
+	type jobC struct{ file string }
+	type resC struct {
+		row chanRow
+		err error
+	}
+
+	inC := make(chan jobC)
+	outC := make(chan resC)
+
+	var wgC sync.WaitGroup
+	workerC := func() {
+		defer wgC.Done()
+		for j := range inC {
+			capMbps := matchCapacity(j.file, caps, a.CapacityMbps)
+			row, e := scanChannel(j.file, chanScanOpts{
+				BinSec:  a.BinSec,
+				CapBps:  capMbps * 1_000_000.0,
+				SkipBad: a.SkipBad,
+			})
+			row.CapacityMbps = capMbps
+			outC <- resC{row: row, err: e}
+		}
+	}
+
+	nw := a.Jobs
+	if nw > len(files) {
+		nw = len(files)
+	}
+	if nw < 1 {
+		nw = 1
+	}
+	for i := 0; i < nw; i++ {
+		wgC.Add(1)
+		go workerC()
+	}
+	go func() {
+		for _, f := range files {
+			inC <- jobC{file: f}
+		}
+		close(inC)
+		wgC.Wait()
+		close(outC)
+	}()
+
+	var channels []chanRow
+	for r := range outC {
+		if r.err != nil {
+			log.Fatalf("[ERROR] channel: %v", r.err)
+		}
+		channels = append(channels, r.row)
+	}
+	sort.Slice(channels, func(i, j int) bool { return channels[i].File < channels[j].File })
+
+	if err := writeChannelsCSV(a.OutChannels, channels); err != nil {
+		log.Fatalf("[ERROR] write channels: %v", err)
+	}
+	fmt.Printf("Channels CSV: %s\n", a.OutChannels)
+
+	// Общие метрики по каналам
+	var chAvgThrMean, chMaxThr, chMLUAvgMean, chMLUPeakMax float64
+	for _, r := range channels {
+		chAvgThrMean += r.AvgBps
+		if r.PeakBps > chMaxThr {
+			chMaxThr = r.PeakBps
+		}
+		chMLUAvgMean += r.MLUAvg
+		if r.MLUPeak > chMLUPeakMax {
+			chMLUPeakMax = r.MLUPeak
+		}
+	}
+	if len(channels) > 0 {
+		chAvgThrMean /= float64(len(channels))
+		chMLUAvgMean /= float64(len(channels))
+	}
+
+	fmt.Println("\n=== CHANNELS OVERALL ===")
+	fmt.Printf("Avg throughput (mean of per-channel avg): %s\n", humanBps(chAvgThrMean))
+	fmt.Printf("Max throughput (max per-channel peak):   %s\n", humanBps(chMaxThr))
+	fmt.Printf("Avg MLU (mean of MLU_avg):               %.2f%%\n", chMLUAvgMean*100.0)
+	fmt.Printf("Max MLU (max of MLU_peak):               %.2f%%\n", chMLUPeakMax*100.0)
+
+	/* ---------- FLOWS (throughput per flow + TCP RTT) ---------- */
+
+	var ff []string
+	if a.FlowsGlob == "" {
+		fmt.Println("[INFO] --flows-glob не задан: берём те же файлы, что и для каналов.")
+		ff = append(ff, files...) // files — это список из --glob
+	} else {
+		var err error
+		ff, err = filepath.Glob(a.FlowsGlob)
+		if err != nil {
+			log.Fatalf("[ERROR] flows-glob: %v", err)
+		}
+		if len(ff) == 0 {
+			log.Fatalf("[ERROR] flows-glob matched 0 files: %s", a.FlowsGlob)
+		}
+	}
+	sort.Strings(ff)
+	fmt.Printf("[INFO] flows: %d files\n", len(ff))
+
+	type jobF struct{ file string }
+	type resF struct {
+		m   map[flowKey]flowAgg
+		err error
+	}
+	inF := make(chan jobF)
+	outF := make(chan resF)
+
+	var wgF sync.WaitGroup
+	workerF := func() {
+		defer wgF.Done()
+		opts := flowScanOpts{
+			Proto:   strings.ToLower(a.Proto),
+			TCPPort: a.TCPPort,
+			UDPPort: a.UDPPort,
+			SkipBad: a.SkipBad,
+		}
+		for j := range inF {
+			m, e := scanFlows(j.file, opts)
+			outF <- resF{m: m, err: e}
+		}
+	}
+
+	nwf := a.Jobs
+	if nwf > len(ff) {
+		nwf = len(ff)
+	}
+	if nwf < 1 {
+		nwf = 1
+	}
+	for i := 0; i < nwf; i++ {
+		wgF.Add(1)
+		go workerF()
+	}
+	go func() {
+		for _, f := range ff {
+			inF <- jobF{file: f}
+		}
+		close(inF)
+		wgF.Wait()
+		close(outF)
+	}()
+
+	// Объединяем потоки из разных файлов:
+	// чтобы не дублировать, берём для 5-tuple: Bytes = max(Bytes), First=min, Last=max.
+	flows := map[flowKey]flowAgg{}
+	for r := range outF {
+		if r.err != nil {
+			log.Fatalf("[ERROR] flows: %v", r.err)
+		}
+		for k, v := range r.m {
+			if ex, ok := flows[k]; !ok {
+				flows[k] = v
+			} else {
+				if v.Bytes > ex.Bytes {
+					ex.Bytes = v.Bytes
+					// packets не суммируем, оставим как proxy
+					ex.Packets = v.Packets
+				}
+				if !v.First.IsZero() && (ex.First.IsZero() || v.First.Before(ex.First)) {
+					ex.First = v.First
+				}
+				if v.Last.After(ex.Last) {
+					ex.Last = v.Last
+				}
+				// RTT-агрегация: просто складывать нельзя (разные места/часы).
+				// Ничего не делаем — RTT считается при построении CSV per-flow из итогового диапазона.
+				// Outstanding тоже не переносим между файлами.
+				flows[k] = ex
 			}
 		}
 	}
 
-	// средние
-	tMean := math.NaN()
-	if len(tputs) > 0 {
-		sum := 0.0
-		for _, x := range tputs {
-			sum += x
-		}
-		tMean = sum / float64(len(tputs))
+	if len(flows) == 0 {
+		log.Fatal(errors.New("no flows found"))
 	}
-	rttMean := math.NaN()
-	if len(rtts) > 0 {
-		sum := 0.0
-		for _, x := range rtts {
-			sum += x
+	if err := writeFlowsCSV(a.OutFlows, flows); err != nil {
+		log.Fatalf("[ERROR] write flows: %v", err)
+	}
+	fmt.Printf("Flows CSV:    %s\n", a.OutFlows)
+
+	// Top-5 flows по throughput (как в эталоне)
+	type pair struct {
+		k flowKey
+		v flowAgg
+	}
+	var list []pair
+	for k, v := range flows {
+		list = append(list, pair{k, v})
+	}
+	sort.Slice(list, func(i, j int) bool {
+		di := list[i].v.Last.Sub(list[i].v.First).Seconds()
+		dj := list[j].v.Last.Sub(list[j].v.First).Seconds()
+		ti := 0.0
+		if di > 0 {
+			ti = (float64(list[i].v.Bytes) * 8) / di
 		}
-		rttMean = sum / float64(len(rtts))
+		tj := 0.0
+		if dj > 0 {
+			tj = (float64(list[j].v.Bytes) * 8) / dj
+		}
+		return ti > tj
+	})
+	top := 5
+	if len(list) < top {
+		top = len(list)
+	}
+	fmt.Println("\nTop flows by throughput:")
+	for i := 0; i < top; i++ {
+		v := list[i].v
+		d := v.Last.Sub(v.First).Seconds()
+		thr := 0.0
+		if d > 0 {
+			thr = (float64(v.Bytes) * 8) / d
+		}
+		fmt.Printf("  %s %s:%d -> %s:%d  thr=%s  bytes=%d  dur=%.3fs\n",
+			list[i].k.Proto, list[i].k.Src, list[i].k.Sp, list[i].k.Dst, list[i].k.Dp,
+			humanBps(thr), v.Bytes, d)
 	}
 
-	// компактный вывод ТОЛЬКО средних
-	if math.IsNaN(tMean) {
-		fmt.Println("Mean throughput (Mbps): NA")
-	} else {
-		fmt.Printf("Mean throughput (Mbps): %.3f\n", tMean)
-	}
-	if math.IsNaN(rttMean) {
-		fmt.Println("Mean TCP RTT (ms):     NA")
-	} else {
-		fmt.Printf("Mean TCP RTT (ms):     %.3f\n", rttMean)
+	// Итоговые средние по всем потокам: Throughput и TCP RTT
+	if len(flows) > 0 {
+		var sumThr float64
+		var nThr int
+		var sumRTTms float64
+		var nRTT int
+
+		for k, v := range flows {
+			d := v.Last.Sub(v.First).Seconds()
+			if d > 0 {
+				thr := (float64(v.Bytes) * 8.0) / d
+				sumThr += thr
+				nThr++
+			}
+			if strings.ToLower(k.Proto) == "tcp" && v.RTTSamples > 0 {
+				avg := float64(v.RTTSum.Microseconds()) / 1000.0 / float64(v.RTTSamples) // мс
+				sumRTTms += avg
+				nRTT++
+			}
+		}
+
+		fmt.Println("\n=== FLOWS OVERALL ===")
+		if nThr > 0 {
+			fmt.Printf("Mean throughput (per-flow):     %s\n", humanBps(sumThr/float64(nThr)))
+		} else {
+			fmt.Println("Mean throughput (per-flow):     NA")
+		}
+		if nRTT > 0 {
+			fmt.Printf("Mean TCP RTT (per-flow avg):    %.3f ms  (n=%d flows)\n", sumRTTms/float64(nRTT), nRTT)
+		} else {
+			fmt.Println("Mean TCP RTT (per-flow avg):    NA (no RTT samples)")
+		}
 	}
 }
+
+/*
+========================= ПРИМЕРЫ ЗАПУСКА =========================
+
+# Подготовка:
+go mod init pcapfc
+go get github.com/google/gopacket@latest
+# (Linux) sudo apt-get install -y libpcap-dev
+
+# 1) Один дефолтный лимит 100 Мбит/с для всех каналов, бины 1с, TCP потоки с приёмников:
+go run pcap_summary_flows_channels.go \
+  --glob "inter_pod_only/grd/*.pcap" \
+  --capacity-mbps 100 \
+  --bin 1 \
+  --flows-glob "inter_pod_only/grd/hosts_rx/*.pcap" \
+  --proto tcp \
+  --jobs 6
+
+# 2) Разные ёмкости по файлам (channels.csv: file,capacity_mbps):
+go run pcap_summary_flows_channels.go \
+  --glob "inter_pod_only/ilp/*.pcap" \
+  --caps-csv ./channels.csv \
+  --bin 0.5 \
+  --flows-glob "inter_pod_only/ilp/hosts_rx/*.pcap" \
+  --proto any \
+  --jobs 8
+
+# Результаты:
+# - Channels CSV:  ./channels_summary.csv
+# - Flows CSV:     ./flows_summary.csv   (добавлены avg_tcp_rtt_ms и rtt_samples)
+# - В терминал выводятся усреднённые: Mean throughput (per-flow) и Mean TCP RTT.
+*/
