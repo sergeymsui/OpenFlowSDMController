@@ -1,64 +1,87 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Clos Experiment (current): one figure
-– столбцы: Average Throughput (Mbps)
-– точки:  Peak Throughput (Mbps)
-– точки:  Avg MLU (%) на правой оси (без соединяющей линии)
+Clos Experiment (current): Avg Throughput & Avg MLU (no sorting)
+– столбцы: Avg Throughput (левая ось)
+– столбцы: Avg MLU (правая ось)
+– без соединяющих линий/пиков; контрастные цвета и штриховки для печати IEEE
 """
 
 import matplotlib.pyplot as plt
 import pandas as pd
 from textwrap import wrap
 
-# ---- Данные из текущего эксперимента ----
-# ASP = Adaptive Shortest Paths, GRD = Greedy, FWA = Frank–Wolfe,
-# USTM, OSPF, LAP = Load Aware Paths, ILP, MSA
+# ---- Данные ровно в том порядке, как в отчёте ----
+# (алгоритм, avg_throughput_mbps, avg_mlu_percent)
 data = [
-    ("USTM", 100.30, 593.87, 100.30),
-    ("ASP",   76.57, 329.21,  76.57),
-    ("LAP",   74.75, 331.43,  74.75),
-    ("FWA",   74.03, 386.25,  74.03),
-    ("GRD",   72.11, 409.55,  72.11),
-    ("ILP",   65.91, 313.53,  65.91),
-    ("OSPF",  44.25, 379.62,  44.25),
-    ("MSA",   35.71, 377.25,  35.71),
+    ("Adaptive Shortest Paths (ASP)", 96.5, 97.99),
+    ("ILP", 59.30, 59.30),
+    ("Greedy (GRD)", 87.50, 88.60),
+    ("MSA", 39.90, 40.50),
+    ("Frank–Wolfe (FWA)", 69.80, 70.79),
+    ("USTM", 69.91, 70.45),
+    ("OSPF", 44.5, 45.21),
+    ("Load Aware Paths (LAP)", 70.4, 71.37),
 ]
 
-df = pd.DataFrame(data, columns=["algorithm", "avg", "peak", "mlu_avg"])
-df = df.sort_values(by="avg", ascending=False).reset_index(drop=True)
+df = pd.DataFrame(data, columns=["algorithm", "avg_mbps", "avg_mlu"])
 
 x = range(len(df))
-labels = ["\n".join(wrap(a, 20)) for a in df["algorithm"]]
+labels = ["\n".join(wrap(a, 22)) for a in df["algorithm"]]
 
 plt.figure(figsize=(12, 6))
 ax1 = plt.gca()
 
-# Столбцы: средняя пропускная способность
-bar_width = 0.55
-bars = ax1.bar(list(x), df["avg"], width=bar_width, label="Avg Throughput (Mbps)")
+bar_w = 0.42
+x_left = [i - bar_w / 2 for i in x]  # позиции для Throughput
+x_right = [i + bar_w / 2 for i in x]  # позиции для MLU
 
+# Цвета/штриховки (контрастные и читаемые в ч/б)
+color_thr = "#00429d"  # тёмно-синий
+color_mlu = "#42deb2"  # карминово-красный
+hatch_thr = ""
+hatch_mlu = ""
+
+# Столбцы: средняя пропускная способность (левая ось)
+bars_thr = ax1.bar(
+    x_left,
+    df["avg_mbps"],
+    width=bar_w,
+    label="Avg Throughput (Mbps)",
+    color=color_thr,
+    edgecolor="black",
+    linewidth=0.6,
+    hatch=hatch_thr,
+)
 ax1.set_ylabel("Throughput (Mbps)", fontsize=10)
 ax1.set_xticks(list(x))
 ax1.set_xticklabels(labels, fontsize=9)
-ax1.grid(axis="y", linestyle=":", linewidth=0.5)
+ax1.grid(axis="y", linestyle=":", linewidth=0.5, alpha=0.8)
 
-# Точки: пиковая пропускная способность (левая ось)
-ax1.scatter(list(x), df["peak"], marker="o", s=50, label="Peak Throughput (Mbps)", zorder=3)
-
-# Точки: Avg MLU (%) на правой оси (без линии)
+# Столбцы: средний MLU (%) — правая ось
 ax2 = ax1.twinx()
-ax2.scatter(list(x), df["mlu_avg"], marker="D", s=45, label="Avg MLU (%)", zorder=3)
+bars_mlu = ax2.bar(
+    x_right,
+    df["avg_mlu"],
+    width=bar_w,
+    label="Avg MLU (%)",
+    color=color_mlu,
+    edgecolor="black",
+    linewidth=0.6,
+    hatch=hatch_mlu,
+)
 ax2.set_ylabel("Avg MLU (%)", fontsize=10)
-ax2.set_ylim(0, max(110, int(df["mlu_avg"].max() * 1.1)))  # небольшой запас сверху
+ax2.set_ylim(0, max(110, int(df["avg_mlu"].max() * 1.1)))  # небольшой запас сверху
 
-plt.title("Clos Experiment (Current): Throughput and Avg MLU by Algorithm", fontsize=11)
+plt.title(
+    "Clos Experiment (Current): Avg Throughput & Avg MLU by Algorithm", fontsize=11
+)
 
-# Совмещённая легенда
+# Легенда (из обеих осей)
 h1, l1 = ax1.get_legend_handles_labels()
 h2, l2 = ax2.get_legend_handles_labels()
 ax1.legend(h1 + h2, l1 + l2, loc="upper right", frameon=False, fontsize=9)
 
 plt.tight_layout()
-plt.savefig("clos_metrics_current_points.png", dpi=300)
+plt.savefig("clos_metrics_avg_ieee.png", dpi=300)
 plt.show()
